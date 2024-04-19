@@ -1,0 +1,35 @@
+/******************************************************************************
+*                    Anisotropy plugin for SOFA                               *
+*                         version 1.0                                         *
+*                       Copyright © Inria                                     *
+*                       All rights reserved                                   *
+*                       2024                                                  *
+*                                                                             *
+* This software is under the GNU General Public License v2 (GPLv2)            *
+*            https://www.gnu.org/licenses/licenses.en.html                    *
+*                                                                             *
+*                                                                             *
+*                                                                             *
+* Authors: Felix Vanneste                                                     *
+*                                                                             *
+* Contact information: felix.vanneste@inria.information                       *
+******************************************************************************/
+#ifndef INITANISOTROPY_H
+#define INITANISOTROPY_H
+
+
+#include <sofa/config.h>
+
+#ifdef SOFA_BUILD_ANISOTROPY
+#define SOFA_ANISOTROPY_API SOFA_EXPORT_DYNAMIC_LIBRARY
+#else
+#define SOFA_ANISOTROPY_API SOFA_IMPORT_DYNAMIC_LIBRARY
+#endif
+
+/** \mainpage
+  This is a the starting page of the plugin documentation, defined in file initModelOrderReduction.h
+  */
+
+#endif
+
+

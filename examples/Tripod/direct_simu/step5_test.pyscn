@@ -1,0 +1,388 @@
+# -*- coding: utf-8 -*-
+
+from splib.numerics import sin,cos, to_radians
+from stlib.components import addOrientedBoxRoi
+from splib.numerics import *
+from stlib.physics.mixedmaterial import Rigidify
+
+
+from stlib.physics.deformable import ElasticMaterialObject
+from stlib.physics.deformable.highOrderShape import generateAnisotropicParam
+
+from stlib.solver import DefaultSolver
+from stlib.scene import Node
+from stlib.scene import Scene
+
+"""
+Step 5: Adding a controller.
+The controller will connect user actions to the simulated behaviour.
+"""
+from tutorial import *
+# from tripod_ho import Tripod
+# from tripod import Tripod
+from tripod_HighOrder import Tripod
+from stlib.physics.deformable import HighOrderShape
+
+"""
+The controller is implemented in this file: tripodcontroller.py
+"""
+from tripodcontroller import TripodController
+
+
+def attachToPinion(node,deformableObject):
+
+    groupIndices = []
+    frames = [[0., 0., 0]]
+
+    ob = getOrientedBoxFromTransform(scale=[10, 10, 10], translation=[0., 25, 0.], eulerRotation=[0.0, 0.0, 0.0])
+    box = node.createObject("BoxROI",
+                           orientedBox=ob,
+                           name="BoxROI",
+                           position=deformableObject.dofs.getData("rest_position"),
+                           drawBoxes=False,
+                           drawSize = 15,
+                           drawPoints=True)
+
+    box.init()
+    # deformableObject.init()
+    groupIndices.append([ind[0] for ind in box.indices])
+
+    # Rigidify the deformable part at extremity to attach arms
+    rigidifiedstruct = Rigidify(node, deformableObject, groupIndices=groupIndices, frames=frames, name="RigidifiedStructure",noInit=True)
+    rigidifiedstruct.DeformableParts.createObject("UncoupledConstraintCorrection")
+    rigidifiedstruct.RigidParts.createObject("UncoupledConstraintCorrection")
+
+    # # Use this to activate some rendering on the rigidified object
+    setData(rigidifiedstruct.RigidParts.dofs, showObject=True, showObjectScale=10, drawMode=2)
+    setData(rigidifiedstruct.RigidParts.RigidifiedParticules.dofs, showObject=True, showObjectScale=1,
+            drawMode=1, showColor=[1., 1., 0., 1.])
+    setData(rigidifiedstruct.DeformableParts.dofs, showObject=True, showObjectScale=1, drawMode=2)
+
+
+def createScene(rootNode):
+    # scene = Scene(rootNode,plugins=['SofaHighOrderTopology','SofaHighOrderFEM'])
+
+    # scene = Scene(rootNode, gravity=[0.0,-9810,0.0],
+    #                         dt=0.01,
+    #                         plugins=['SofaHighOrderTopology','SofaHighOrderFEM'])
+
+    # scene.VisualStyle.displayFlags="showBehaviorModels showForceFields"
+
+    rootNode.createObject('VisualStyle', displayFlags='showVisualModels')
+    rootNode.findData('gravity').value=[0.0,-9810,0.0];
+    rootNode.findData('dt').value=0.01
+    
+    # rootNode.VisualStyle.displayFlags = "hideForceFields"
+    rootNode.VisualStyle.displayFlags = "showForceFields"
+    cfg = rootNode.createChild("Config")
+    plugins=['SofaHighOrderTopology','SofaHighOrderFEM']
+    for name in plugins:
+        cfg.createObject('RequiredPlugin', name=name, printLog=False)
+        
+    cfg.createObject('OglSceneFrame', style="Arrows", alignment="TopRight")
+
+
+    rotation=[90, 0, 0],
+
+    poissonRatio=[0.45]*2684
+    totalMass=0.032
+
+
+    ####################################### ISOTROPIC
+    translation=[0.0, 30, 0.0]
+
+    youngModulus=[200]*2684
+
+    normal_cube = rootNode.createChild('normal')
+    DefaultSolver(normal_cube)
+    tripod_iso = ElasticMaterialObject(normal_cube,
+                                  name='tripod_iso',
+                                  # volumeMeshFileName="data/mesh/tripod_mid.gidmsh",
+                                  # volumeMeshFileName="data/mesh/tripod_015.vtk",
+                                  volumeMeshFileName="data/mesh/tripod_coarse_04.vtk",
+                                  translation=translation, rotation=rotation,
+                                  youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+    tripod_iso.integration.rayleighStiffness = 0.1
+    tripod_iso.integration.rayleighMass = 0.1
+    tripod_iso.init()
+
+    boxes_ROI = addBox(tripod_iso,translation_global=[translation[0],0,translation[2]])
+    addFixation(tripod_iso,translation_global=[translation[0],0,translation[2]])
+    #######################################
+    for i in range(0,3):
+        # print("boxes_ROI[0]["+str(i)+"] = ")
+        # print(boxes_ROI[0][i].tetrahedronIndices)
+        print("boxes_ROI[1]["+str(i)+"] = ")
+        print(boxes_ROI[1][i].tetrahedronIndices)
+        # print("boxes_ROI[2]["+str(i)+"] = ")
+        # print(boxes_ROI[2][i].tetrahedronIndices)
+    # ####################################### ISOTROPIC
+    # translation=[0.0, 30, 0.0]
+
+    # youngModulus=[200]*2684
+
+    # for i in range(0,3):
+    #     for indice in boxes_ROI[0][i].tetrahedronIndices:
+    #         youngModulus[indice[0]] = 50
+    #     for indice in boxes_ROI[1][i].tetrahedronIndices:
+    #         youngModulus[indice[0]] = 300
+
+    # tripod_iso = ElasticMaterialObject(rootNode,
+    #                               name='tripod_iso_2',
+    #                               volumeMeshFileName="data/mesh/tripod_mid.gidmsh",
+    #                               translation=translation, rotation=rotation,
+    #                               youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+
+    # addFixation(tripod_iso,translation_global=[translation[0],0,translation[2]])
+    # #######################################
+
+
+    # ####################################### CUBIC
+    # translation=[-150.0, 30, 0.0]
+
+    # anisotropyDirections = [[0,0,0]]*2684
+    # coef = [[1,0,0]]*2684
+    # directions = [[[0,0,1],[-1,0,0]],
+    #               [[1,0,-1],[-1,0,-1]],
+    #               [[-1,0,1],[0,0,1]]]
+
+    # for i in range(0,3):
+    #     nbr += len(boxes_ROI[0][i].tetrahedronIndices) + len(boxes_ROI[1][i].tetrahedronIndices)
+    #     for indice in boxes_ROI[0][i].tetrahedronIndices:
+    #         anisotropyDirections[indice[0]] = directions[i][0]
+
+    #     for indice in boxes_ROI[1][i].tetrahedronIndices:
+    #         anisotropyDirections[indice[0]] = directions[i][1]
+
+
+    # tripod_cubic = HighOrderShape(rootNode,name='tripod_cu',volumeMeshFileName="data/mesh/tripod_mid.gidmsh",
+    #                                 translation=translation, rotation=rotation,
+    #                                 elasticitySymmetry='cubic',anisotropyParameters=coef,anisotropyDirections=anisotropyDirections,
+    #                                 youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+    
+    # addBox(tripod_cubic,translation_global=[translation[0],0,translation[2]])
+    # #######################################
+
+
+    # ####################################### ANISOTROPIC
+    # translation=[-150.0, 30, 0.0]
+
+    # youngModulus=[300]*2684
+    # transverse_anisotropy_coef = [[200.0,0.45,69.0]]*2684
+    # anisotropyDirections = [[0,1,0]]*2684
+
+    # # for i in range(0,3):
+    # #     for indice in boxes_ROI[0][i].tetrahedronIndices:
+    # #         transverse_anisotropy_coef[indice[0]] = [50,0.45,getShear(50,0.45)]
+    # #     for indice in boxes_ROI[1][i].tetrahedronIndices:
+    # #         transverse_anisotropy_coef[indice[0]] = [300,0.45,getShear(300,0.45)]
+
+    # tripod_ho = HighOrderShape(rootNode,name='tripod_ho_ref',volumeMeshFileName="data/mesh/tripod_mid.gidmsh",
+    #                             translation=translation, rotation=rotation,
+    #                             elasticitySymmetry='transverseIsotropic',anisotropyParameters=transverse_anisotropy_coef,anisotropyDirections=anisotropyDirections[0],
+    #                             youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+
+    # addFixation(tripod_ho.highOrder_node,translation_global=[translation[0],0,translation[2]])
+    # ######################################
+
+
+    ####################################### ANISOTROPIC
+    # translation=[0.0, 30, 0.0]
+
+    # transverse_anisotropy_coef = [[200.0,0.45,getShear(200,0.45)]]*2684
+    # anisotropyDirections = [[0,1,0]]*2684
+    # directions = [[[0,0,1],[-1,0,0]],
+    #               [[1,0,-1],[-1,0,-1]],
+    #               [[-1,0,1],[0,0,1]]]
+
+    # # for i in range(0,3):
+    # #     for indice in boxes_ROI[0][i].tetrahedronIndices:
+    # #         transverse_anisotropy_coef[indice[0]] = [50,0.45,getShear(50,0.45)]
+    # #         # anisotropyDirections[indice[0]] = directions[i][0]
+    # #     for indice in boxes_ROI[1][i].tetrahedronIndices:
+    # #         # anisotropyDirections[indice[0]] = directions[i][1]
+    # #         transverse_anisotropy_coef[indice[0]] = [300,0.45,getShear(300,0.45)]
+
+    # tripod_ho = HighOrderShape(rootNode,name='tripod_ho',volumeMeshFileName="data/mesh/tripod_mid.gidmsh",
+    #                             translation=translation, rotation=rotation,
+    #                             elasticitySymmetry='transverseIsotropic',anisotropyParameters=transverse_anisotropy_coef,anisotropyDirections=anisotropyDirections,
+    #                             youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+
+    # addFixation(tripod_ho.highOrder_node,translation_global=[translation[0],0,translation[2]])
+    #######################################
+
+
+    # translation=[0.0, 30, 0.0]
+
+    # poissonRatio=[0.45]*262
+    # totalMass=0.032
+
+
+
+    # youngModulus=[200]*262
+
+    # transverse_anisotropy_coef = [[200.0,0.45,getShear(200,0.45)]]*262
+    # anisotropyDirections = [[0,1,0]]*262
+
+    # # for i in range(0,3):
+    # #     for indice in boxes_ROI[0][i].tetrahedronIndices:
+    # #         transverse_anisotropy_coef[indice[0]] = [50,0.45,getShear(50,0.45)]
+    # #         # anisotropyDirections[indice[0]] = directions[i][0]
+    # #     for indice in boxes_ROI[1][i].tetrahedronIndices:
+    # #         # anisotropyDirections[indice[0]] = directions[i][1]
+    # #         transverse_anisotropy_coef[indice[0]] = [300,0.45,getShear(300,0.45)]
+
+    # beam = HighOrderShape(rootNode,name='beam',volumeMeshFileName="data/mesh/myBeam.vtk",
+    #                             translation=translation, rotation=rotation,
+    #                             elasticitySymmetry='transverseIsotropic',anisotropyParameters=transverse_anisotropy_coef,anisotropyDirections=anisotropyDirections,
+    #                             youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+
+    # addFixation(beam.highOrder_node,translation_global=[translation[0],0,translation[2]])
+
+    # normal_beam = rootNode.createChild('normal_beam')
+    # DefaultSolver(normal_beam)
+    # beam1 = ElasticMaterialObject(normal_beam,name='beam1',volumeMeshFileName="data/mesh/myBeam.vtk",
+    #                             translation=translation, rotation=rotation,
+    #                             youngModulus=youngModulus, poissonRatio=poissonRatio, totalMass=totalMass)
+
+    # addFixation(beam1,translation_global=[translation[0],0,translation[2]])
+
+def addBox(node,translation_global=[0,0,0]):
+
+    numstep = 3
+    angleShift=180.0
+
+    boxes_ROI =[[],[],[]]
+
+    # gap = 8
+    # firstbox = 60.0
+    # distBoxO1 = firstbox/2.0 + gap
+    # secondBox = 80.0
+    # distBoxO2 = secondBox/2.0 #+ gap # + firstbox
+
+    # angleBox2 = [34,-27,90]
+    # translationBox2 = [[distBoxO2*sin(to_radians(angleShift))+5, -1.35, distBoxO2*cos(to_radians(angleShift))-8],
+    #                     [distBoxO2*sin(to_radians(1.0*360/3.0+angleShift))-10, -1.35, distBoxO2*cos(to_radians(1.0*360/3.0+angleShift))],
+    #                     [distBoxO2*sin(to_radians(2.0*360/3.0+angleShift))+4, -1.35, distBoxO2*cos(to_radians(2.0*360/3.0+angleShift))+8.5]]
+
+    # angleBox1 = [63,0,117]
+    # translationBox1 = [[distBoxO2*sin(to_radians(angleShift))-16, -1.35, distBoxO2*cos(to_radians(angleShift))+5],
+    #                     [distBoxO2*sin(to_radians(1.0*360/3.0+angleShift))+11, -1.35, distBoxO2*cos(to_radians(1.0*360/3.0+angleShift))+11.3],
+    #                     [distBoxO2*sin(to_radians(2.0*360/3.0+angleShift))+4.5, -1.35, distBoxO2*cos(to_radians(2.0*360/3.0+angleShift))-14]]
+    
+    # translationBox3 = [[10.0,0.0,-3.5],[-8.0,0.0,-7.8],[-2.7,0.0,10.8]] #[distBoxO2*sin(to_radians(angleShift)), -1.35, distBoxO2*cos(to_radians(angleShift))],
+    # angleBox3 = [115,63,6] #[117,63,0]
+
+    gap = 8
+    firstbox = 60.0
+    distBoxO1 = firstbox/2.0 + gap
+    secondBox = 80.0
+    distBoxO2 = secondBox/2.0 #+ gap # + firstbox
+
+
+
+    angleBox2 = [27,-32,87]
+    translationBox2 = [[distBoxO2*sin(to_radians(angleShift))+7, -1.35, distBoxO2*cos(to_radians(angleShift))-8.5],
+                        [distBoxO2*sin(to_radians(1.0*360/3.0+angleShift))-10, -1.35, distBoxO2*cos(to_radians(1.0*360/3.0+angleShift))-0.5],
+                        [distBoxO2*sin(to_radians(2.0*360/3.0+angleShift))+3.5, -1.35, distBoxO2*cos(to_radians(2.0*360/3.0+angleShift))+10]]
+
+    angleBox1 = [63,0,117]
+    translationBox1 = [[distBoxO2*sin(to_radians(angleShift))-16, -1.35, distBoxO2*cos(to_radians(angleShift))+5],
+                        [distBoxO2*sin(to_radians(1.0*360/3.0+angleShift))+11, -1.35, distBoxO2*cos(to_radians(1.0*360/3.0+angleShift))+11.3],
+                        [distBoxO2*sin(to_radians(2.0*360/3.0+angleShift))+4.5, -1.35, distBoxO2*cos(to_radians(2.0*360/3.0+angleShift))-14]]
+    
+    translationBox3 = [[10.0,0.0,-3.5],[-8.0,0.0,-7.8],[-2.7,0.0,10.8]] #[distBoxO2*sin(to_radians(angleShift)), -1.35, distBoxO2*cos(to_radians(angleShift))],
+    angleBox3 = [115,63,6] #[117,63,0]
+
+    for i in range(0,1):
+
+        fi = float(i)
+        fnumstep = float(numstep)
+        # angle = angleTest[i]#fi*360/fnumstep
+        angle2 = fi*360/fnumstep+angleShift
+        # eulerRotation = [0,angle,0]
+    
+        position = node.dofs.getData("rest_position")
+        o = addOrientedBoxRoi(node,  name="BoxROI",position=position,translation=[0,25,0], scale=[150,5,150])
+
+        o.init()
+        o.drawPoints = True
+        o.drawSize = 2
+        print(len(o.tetrahedronIndices),o.tetrahedronIndices)
+        # # translation = [distBoxO1*sin(to_radians(angle2)), -1.35, distBoxO1*cos(to_radians(angle2))]
+        # translation = translationBox1[i]
+        # translation = [x + y for x, y in zip(translation, translation_global)]
+
+        # o1 = addOrientedBoxRoi(node, name="BoxROI_1_"+str(i), position=position,
+        #                                   translation=vec3.vadd(translation, [0.0,25.0,0.0]),
+        #                                   eulerRotation=[0,angleBox1[i],0], scale=[30,15,firstbox])
+
+
+        # # o1.init()
+        # # o1.drawPoints = True
+        # # o1.drawSize = 2
+
+        # # translation = [distBoxO2*sin(to_radians(angle2))-10, -1.35, distBoxO2*cos(to_radians(angle2))]
+        # translation = translationBox2[i]
+        # translation = [x + y for x, y in zip(translation, translation_global)]
+
+        # o2 = addOrientedBoxRoi(node,  name="BoxROI_2_"+str(i), position=position,
+        #                               translation=vec3.vadd(translation, [0.0,25.0,0.0]),
+        #                               eulerRotation=[0,angleBox2[i],0], scale=[40,15,secondBox])
+ 
+        # o2.init()
+        # o2.drawPoints = True
+        # o2.drawSize = 2
+
+        # # translation = translationBox3[0]
+        # # if i == 0:
+        # #     o3 = addOrientedBoxRoi(node,  name="BoxROI_3_"+str(i), position=position,
+        # #                       translation=vec3.vadd(translationBox3[i], [0.0,25.0,0.0]),
+        # #                       eulerRotation=[0,angleBox3[i],0], scale=[7,14,17])
+        # # elif i == 2:
+        # #     o3 = addOrientedBoxRoi(node,  name="BoxROI_3_"+str(i), position=position,
+        # #                       translation=vec3.vadd(translationBox3[i], [0.0,25.0,0.0]),
+        # #                       eulerRotation=[0,angleBox3[i],0], scale=[7,14,16])
+        # # else:
+        # #     o3 = addOrientedBoxRoi(node,  name="BoxROI_3_"+str(i), position=position,
+        # #                                   translation=vec3.vadd(translationBox3[i], [0.0,25.0,0.0]),
+        # #                                   eulerRotation=[0,angleBox3[i],0], scale=[6,10,20])
+
+        # # o3.init()
+
+        # boxes_ROI[0].append(o1)
+        # boxes_ROI[1].append(o2)
+        # # boxes_ROI[2].append(o3)
+
+    return boxes_ROI
+
+def addFixation(node,translation_global=[0,0,0]):
+
+    translation=[0., 25, 0.]
+    translation = [x + y for x, y in zip(translation, translation_global)]
+    ob = getOrientedBoxFromTransform(scale=[10, 10, 10], translation=translation, eulerRotation=[0.0, 0.0, 0.0])
+    box = node.createObject("BoxROI",
+                                orientedBox=ob,
+                                name=node.name+"_BoxROI_fix_middle",
+                                position=node.dofs.getData("rest_position"),
+                                drawBoxes=False,
+                                drawSize = 15,
+                                drawPoints=False)
+
+    node.createObject('RestShapeSpringsForceField', name="rssff",
+                            points='@'+node.name+'_BoxROI_fix_middle.indices',
+                            stiffness='1e12')
+
+
+def TRSinOrigin(positions,modelPosition,translation,rotation):
+    posOrigin = subtract(positions , modelPosition)
+    if any(isinstance(el, list) for el in positions):
+        posOriginTRS = transformPositions(posOrigin,translation,eulerRotation=rotation)
+    else:
+        posOriginTRS = transformPosition(posOrigin,TRS_to_matrix(translation,eulerRotation=rotation))
+    return add(posOriginTRS,modelPosition).tolist()
+    
+def newBox(positions,modelPosition,translation,rotation,offset):
+    pos = TRSinOrigin(positions,modelPosition,translation,rotation)
+    offset =transformPositions([offset],eulerRotation=rotation)[0]
+    return add(pos,offset).tolist()
