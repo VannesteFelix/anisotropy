@@ -48,4 +48,4 @@ sofa_create_package_with_targets(
     RELOCATABLE "plugins"
     )
 
-include(cmake/packaging.cmake)
+#include(cmake/packaging.cmake)

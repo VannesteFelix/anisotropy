@@ -188,7 +188,7 @@ protected:
         EigenTensors eigenTensors; // for eigen tensors
         EigenValues eigenValues; // for eigen values
         size_t v[4]; // the indices of the 4 vertices
-        type::vector<Mat3x3> rotatedStiffnessVector; // the nc*(nc+1)/2 stiffness matrices where nc is the number of control points
+        TetraEdgesStiffness rotatedStiffnessVector; // the nc*(nc+1)/2 stiffness matrices where nc is the number of control points
         type::vector<Mat3x3> reducedStiffnessVector;
         // store 6 2x3 matrices per integration points
         type::vector<  Mat6x9 >  integrationPointsStiffnessVector;
@@ -272,8 +272,9 @@ public:
     Data<AnisotropyDirectionArray> d_anisotropyDirection; // the directions of anisotropy
 //    Data<type::vector<type::vector<Mat3x3>>> d_ortho_matrix;
 //    Data<type::vector<type::vector<Real>>> d_ortho_scalar;
-//    Data<type::vector<Vec5>> d_controlPoints;
-//    Data<Real> d_meshRotation;
+    Data<type::vector<Vec5>> d_controlPoints;
+    Data<int> d_IDWDepth;
+    Data<Real> d_meshRotation;
     //    Data<Real> d_poissonRatio; // stiffness coefficient for isotropic elasticity;
     //    Data<Real> d_youngModulus;
 
@@ -314,6 +315,9 @@ public:
     void addKToMatrix(sofa::linearalgebra::BaseMatrix *mat, SReal k, unsigned int &offset) override;
 
     void updateTopologyInformation();
+    void setMechanicalParametersFromControlPoints(size_t eltIndex,Tetra indexArray);
+    type::vector<std::pair<Real, int> > generateListOfNorm(Coord tetraBarycenter);
+    void IDWInterpolationBewteenControlPoints(type::vector<std::pair<Real, int> > listOfNormWeighted,Real* dataToInterpolate,size_t indexData);
 
     virtual Real getLambda() const { return lambda;}
     virtual Real getMu() const { return mu;}
@@ -348,7 +352,7 @@ protected :
 
     virtual const TetraEdgesStiffness &getStiffnessArray(const TetrahedronRestInformation *restTetra);
 
-    virtual const type::vector<Mat3x3> &getRotatedStiffnessArray(const TetrahedronRestInformation *restTetra);
+    virtual const TetraEdgesStiffness &getRotatedStiffnessArray(const TetrahedronRestInformation *restTetra);
 
     // compute elasticity tensor for isotropic and anisotropic cases
 //    void computeElasticityTensor();
