@@ -112,7 +112,7 @@ TetrahedronAnisotropicForceField<DataTypes>::TetrahedronAnisotropicForceField()
                                    "the directions of anisotropy")),
     d_controlPoints(
         initData(&d_controlPoints, "controlPoints", "controlPoints")),
-    d_IDWDepth(initData(&d_controlPoints, "IDWDepth",
+    d_IDWDepth(initData(&d_IDWDepth, "IDWDepth",
                         "How many CP a data is interpolated upon")),
     d_meshRotation(initData(&d_meshRotation, "meshRotation", "")),
     d_drawHeterogeneousTetra(
