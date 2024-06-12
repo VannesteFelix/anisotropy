@@ -27,7 +27,7 @@ set(SOURCE_FILES
     )
 
 set(README_FILES
-    README.md
+    # README.md
     )
 
 add_library(${PROJECT_NAME} SHARED ${HEADER_FILES} ${SOURCE_FILES} ${README_FILES})
