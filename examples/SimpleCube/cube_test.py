@@ -29,7 +29,7 @@ transverse_anisotropy_coef = None
 
 def createScene(rootNode):
 
-    def cube(name="cube",translationY=0,rotation=[0,0,0],elasticitySymmetry='transverseIsotropic',ho=True,color=[0,0,0,1]):
+    def cube(name="cube",translationY=0,rotation=[0,0,0],translation=[0,0,0],elasticitySymmetry='transverseIsotropic',ho=True,color=[0,0,0,1]):
         # body = scene.createChild(name)
 
         if ho:
@@ -38,7 +38,7 @@ def createScene(rootNode):
             e.addObject('MeshGmshLoader',
                                       name='loader',
                                       rotation=rotation,
-                                      translation=[0,-7.5+translationY,-7.5],
+                                      translation=translation,#[0,-7.5+translationY,-7.5],
                                       filename=volumeMeshFileName)
             e.addObject('MeshTopology',
                                       src='@loader',
@@ -55,8 +55,8 @@ def createScene(rootNode):
 
             # ForceField components
 
-            high_fem = e.addObject('TetrahedronAnisotropicForceField',
-                                      name="Elasticity",  printLog=1,  poissonRatio=poissonRatio,  youngModulus=youngModulus,
+            high_fem = e.addObject('TetrahedronAnisotropicForceField', printLog=1,
+                                      name="Elasticity",  poissonRatio=poissonRatio,  youngModulus=youngModulus,
                                       # integrationMethod='analytical',
                                       # method='qr',
                                       # forceAffineAssemblyForAffineElements=False,
@@ -94,11 +94,11 @@ def createScene(rootNode):
 
             # ForceField components
 
-            e.addObject('TetrahedronFEMForceField',
+            e.addObject('TetrahedronFEMForceField',#printLog=1
                                       name="linearElasticBehavior",
-                                      youngModulus=50,
-                                      poissonRatio=0.45)
-                                      # method="small")
+                                      youngModulus=youngModulus,
+                                      poissonRatio=poissonRatio,
+                                      method="large")
 
         FixedBox(atPositions=[0, -8+translationY, -8, 1, 8+translationY, 8], applyTo=e,
                  doVisualization=True)
@@ -108,15 +108,19 @@ def createScene(rootNode):
         return e
 
 
-    scene = Scene(rootNode, gravity=[0.0, 0.0,-9810], dt=0.001, iterative=True, plugins=["Anisotropy","SofaMatrix"])
+    scene = Scene(rootNode, gravity=[0.0, 0.0,-98100], dt=0.01, iterative=True, 
+      plugins=["Anisotropy","SofaMatrix"])
     scene.addObject('BackgroundSetting', color=[1,1,1])
     scene.addMainHeader()
+    scene.Simulation.TimeIntegrationSchema.rayleighMass = 0.1
+    scene.Simulation.TimeIntegrationSchema.rayleighStiffness = 0.1
+    scene.Simulation.TimeIntegrationSchema.vdamping = 1
     scene.addObject('DefaultVisualManagerLoop')
     # scene.addObject('FreeMotionAnimationLoop')
     # scene.addObject('GenericConstraintSolver', maxIterations=50, tolerance=1e-5)
     # scene.Simulation.addObject('GenericConstraintCorrection')
     # scene.Simulation.TimeIntegrationSchema.rayleighStiffness = 0.005
-    scene.Simulation.TimeIntegrationSchema.firstOrder=True
+    # scene.Simulation.TimeIntegrationSchema.firstOrder=True
     # scene.Simulation.addObject("GlobalSystemMatrixImage")
 
     scene.Settings.mouseButton.stiffness = 10
@@ -128,36 +132,60 @@ def createScene(rootNode):
     #### REF    ############################################
     youngModulus= 1390
     poissonRatio= 0.26162
-    c = cube(name="isotropic",ho=False,color=[1,0,0,1])
-    scene.Modelling.addChild(c)
-    scene.Simulation.addChild(c)
+    # youngModulus= 800
+    # poissonRatio= 0.4
+    # c = cube(name="isotropic",ho=False,color=[1,0,0,1])
+    # scene.Modelling.addChild(c)
+    # scene.Simulation.addChild(c)
 
     #### REF USING ANISOTROPY   ############################
+    # youngModulusTransverse = 800 #1170
+    # poissonRatioTransverse = 0.4 #(yz)
+    # youngModulusLongitudinal = 30 # youngModulusTransverse
+    # poissonRatioTransverseLongitudinal = 0.2 # poissonRatioTransverse
+    # shearModulusLongitudinal = youngModulusTransverse / (2*(1+poissonRatioTransverse))
+
     youngModulusTransverse = 1390 #1170
     poissonRatioTransverse = 0.26162 #(yz)
-    youngModulusLongitudinal = 94.22
+    youngModulusLongitudinal = 20 # 94.22
     poissonRatioTransverseLongitudinal = 0.4161  #(zx)
     shearModulusLongitudinal = 16.28215
     poissonRatioLongitudinalTransverse = 0.02975 #(xy)
-    # youngModulusTransverse = 250
-    # poissonRatioTransverse = 0.45 #(yz)
-    # youngModulusLongitudinal = 250
-    # poissonRatioTransverseLongitudinal = 0.45  #(zx)
+
+    # youngModulusTransverse = 1390
+    # poissonRatioTransverse = 0.26162 #(yz)
+    # youngModulusLongitudinal = youngModulusTransverse
+    # poissonRatioTransverseLongitudinal = poissonRatioTransverse
     # shearModulusLongitudinal = 80
-    # poissonRatioLongitudinalTransverse = 0.45 #(xy)
+    # poissonRatioLongitudinalTransverse = poissonRatioTransverseLongitudinal
     ################################################
 
     youngModulus= [youngModulusTransverse]*nbr_tretra
     poissonRatio= [poissonRatioTransverse]*nbr_tretra
-    anisotropyDirections = [[0.25,0.6,0]]*nbr_tretra
+    anisotropyDirections = [[0.25,0.5,0]]*nbr_tretra
     transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
+    # transverse_anisotropy_coef = [[2,youngModulusTrans verse,poissonRatioTransverse, shearModulusLongitudinal]]*nbr_tretra
 
-    c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,0,1,1])#,translationY=40)
+    c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,0,1,1],translation=[0,-7.5,-7.5],translationY=0)
     scene.Modelling.addChild(c)
     scene.Simulation.addChild(c)
     ####################################################
+    anisotropyDirections = [[-0.25,0.5,0]]*nbr_tretra
+    transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
+
+    c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,1,0,1],translationY=0,translation=[0,-7.5,-7.5],rotation=[0,0,0])
+    scene.Modelling.addChild(c)
+    scene.Simulation.addChild(c)
+    ###################################################
+    # anisotropyDirections = [[0.25,-0.5,0]]*nbr_tretra
+    # transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
+
+    # c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[1,0,0,1],translationY=0,translation=[0,-7.5,-7.5],rotation=[0,0,0])
+    # scene.Modelling.addChild(c)
+    # scene.Simulation.addChild(c)
 
 
+    ####################################################
     # # transverseIsotropic # isotropic # cubic
     # ####################################################
     # youngModulus= [1390]*nbr_tretra

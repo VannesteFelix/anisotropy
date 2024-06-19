@@ -23,7 +23,7 @@
 #include <sofa/defaulttype/SolidTypes.h>
 #include <sofa/core/visual/VisualParams.h>
 
-#include <GL/gl.h>
+#include <sofa/gl/gl.h>
 
 
 const unsigned int edgesInTetrahedronArray[6][2] = {{0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3}};
@@ -98,7 +98,7 @@ TetrahedronAnisotropicForceField<DataTypes>::TetrahedronAnisotropicForceField()
                                                                                      "- for transverse symemetry --> anisotropyParameters == [youngModulusLongitudinal, poissonRatioTransverseLongitudinal, shearModulusTransverse]"))
     , d_anisotropyDirection(initData(&d_anisotropyDirection, "anisotropyDirections", "the directions of anisotropy"))
     , d_controlPoints(initData(&d_controlPoints,"controlPoints","controlPoints"))
-    , d_IDWDepth(initData(&d_controlPoints,"IDWDepth","How many CP a data is interpolated upon"))
+    , d_IDWDepth(initData(&d_IDWDepth,"IDWDepth","How many CP a data is interpolated upon"))
     , d_meshRotation(initData(&d_meshRotation,"meshRotation",""))
     , d_drawHeterogeneousTetra(initData(&d_drawHeterogeneousTetra,true,"drawHeterogeneousTetra","Draw Heterogeneous Tetra in different color"))
     , d_drawDirection(initData(&d_drawDirection,true,"drawDirection","Draw different color for each direction"))
@@ -878,7 +878,7 @@ template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::MechanicalParams* mparams /* PARAMS FIRST */,
                                                                         DataVecDeriv &  dataF, const DataVecCoord &  dataX , const DataVecDeriv & /*dataV*/ )
 {
-    msg_info() << "ENTER addForce";
+    // msg_info() << "ENTER addForce";
 
     SOFA_UNUSED(mparams);
 
@@ -905,21 +905,12 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
     Coord dpos,sv;
     typename VecElement::const_iterator it;
     for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
-//    for(auto &tetInf  : tetrahedronInf)
     {
         Tetra index = *it;
         tetinfo=&tetrahedronInf[i];
         size_t nbControlPoints=index.size();
         const  TetraEdgesStiffness &stiffnessArray=getStiffnessArray(tetinfo);
 
-        if(i==5)
-        {
-            msg_info() << index;
-            msg_info() << stiffnessArray;
-            // msg_info() << nbControlPoints;
-            // msg_info() << tetinfo->v[edgesInTetrahedronArray[1][1]];
-            // msg_info() << tetinfo->v[edgesInTetrahedronArray[1][0]];
-        }
 
         Mat3x3 deformationGradient,S,R;
         Coord dpp[6];
@@ -936,15 +927,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
         tetinfo->rotation=R.transposed();
         std::fill(force.begin(),force.end(),Coord());
 
-////        if (mparams->implicit()) { //mparams->implicit()) {
         tetinfo->rotatedStiffnessVector.clear();
-////        }
-
-        // if(i==50000)
-        // {
-        //     msg_info() << "---- addForce ----";
-        //     msg_info() << "R : "<< R;
-        // }
 
         // loop over each entry in the stiffness vector of size nbControlPoints*(nbControlPoints-1)/2
         for (l=0,j=0; j<nbControlPoints; ++j) {
@@ -959,27 +942,16 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
                 // force on second vertex in the rest configuration
                 force[j]+=stiffnessArray[l].multTranspose(dpos);
 
-////                if (mparams->implicit()) {
                 // implicit scheme : need to store the rotated tensor
                 Mat3x3 mat=R*stiffnessArray[l]*tetinfo->rotation;
-                // tetinfo->rotatedStiffnessVector.push_back(mat);
-                if(i==5)
-                {
-                    msg_info() << "mat : "<< mat;
-                }
                 tetinfo->rotatedStiffnessVector[l] = mat;
-////                }
 
             }
         }
-        for (j=0; j<nbControlPoints; ++j) {
+
+        for (j=0; j<nbControlPoints; ++j)
+        {
             f[index[j]]+=R*force[j];
-
-            // if(i==50000)
-            // {
-            //     msg_info() << "force : "<< force[j];
-            // }
-
         }
 
     }
@@ -992,7 +964,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::addDForce(const sofa::core::MechanicalParams* mparams /* PARAMS FIRST */, DataVecDeriv&   datadF , const DataVecDeriv&   datadX )
 {
-    msg_info() << "ENTER addDForce";
+    // msg_info() << "ENTER addDForce";
 
     VecDeriv& df       = *(datadF.beginEdit());
     const VecCoord& dx =   datadX.getValue()  ;
@@ -1014,10 +986,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::addDForce(const sofa::core::Me
         Tetra index = *it;
         tetinfo=&tetrahedronInf[i];
         const  TetraEdgesStiffness &stiffnessArray=getRotatedStiffnessArray(tetinfo);
-        if(i==5)
-        {
-            msg_info() << "stiffnessArray : "<< stiffnessArray;
-        }
         sofa::type::vector<Deriv> dforce;
 
         dforce.resize(nbControlPoints);
@@ -1032,12 +1000,9 @@ void TetrahedronAnisotropicForceField<DataTypes>::addDForce(const sofa::core::Me
                 dpos=dx[v0]-dx[v1];
                 dforce[k]-=stiffnessArray[rank]*dpos*kFactor;
                 dforce[j]+=stiffnessArray[rank].multTranspose(dpos*kFactor);
-                if(i==5)
-                {
-                    msg_info() << rank << " , " << stiffnessArray[rank] << " , " << dpos << " , " << kFactor;
-                }
             }
         }
+
         for (j=0; j<nbControlPoints; ++j)
         {
             df[index[j]]+=dforce[j];
@@ -1132,7 +1097,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
         if (!vparams->displayFlags().getShowForceFields()) return;
 
         type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
-        TetrahedronRestInformation *tetinfo;
         const VecElement * _indexedElements = & (_topology->getTetrahedra());
 
         const VecCoord& x = this->mstate->read(core::ConstVecCoordId::position())->getValue();
@@ -1146,8 +1110,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 
         for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
         {
-            tetinfo=&tetrahedronInf[i];
-
             anisotropyType = d_anisotropyParameter.getValue()[i][0];
 
 
@@ -1187,7 +1149,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 
             if(d_drawDirection.getValue() and d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra())
             {
-                //                if (i == 400) msg_info() << "------------------------------------------------ 1"<< d_anisotropyDirection.getValue()[i];
+                // msg_info() << "----- d_anisotropyDirection ----- " << i;
                 Coord n = d_anisotropyDirection.getValue()[i];
                 n/=n.norm();
 
@@ -1214,19 +1176,17 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 
                 tetraEdgeLenght /= 6;
                 Real tetraInsphere =  tetraEdgeLenght / sqrt(24);
-                n *= tetraInsphere ;
                 temp *= tetraInsphere ;
                 type::Quat<SReal> q;
-                q.fromMatrix(tetinfo[i].rotation);
+                q.fromMatrix(tetrahedronInf[i].rotation);
                 q.normalize();
-//                temp = q.inverseRotate(temp);
+                temp = q.inverseRotate(temp);
 
                 glLineWidth(3);
                 vparams->drawTool()->drawLine(tetraBarycenter-temp,tetraBarycenter+temp, type::RGBAColor(0.,0.,0.,.8));
-                //                if (i == 400) msg_info() << "------------------------------------------------ 2"<< tetrahedronInfo[i].rotation;
             }
             if(d_drawHeterogeneousTetra.getValue()) {
-                msg_info() << "----- d_drawHeterogeneousTetra -----";
+                // msg_info() << "----- d_drawHeterogeneousTetra ----- " << i;
                 young_1 = d_youngModulus.getValue()[i];
                 young_2 = d_anisotropyParameter.getValue()[i][1];
                 if(young_1 - young_2 != 0)
