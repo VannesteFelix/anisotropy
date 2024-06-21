@@ -14,7 +14,7 @@
 *                                                                             *
 * Contact information: felix.vanneste@inria.information                       *
 ******************************************************************************/
-#include <Anisotropy/config.h>
+#include <Anisotropy/component/initAnisotropy.h>
 #include <sofa/core/ObjectFactory.h>
 
 #include <sofa/helper/system/PluginManager.h>

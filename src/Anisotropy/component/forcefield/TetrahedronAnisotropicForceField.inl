@@ -16,7 +16,7 @@
 ******************************************************************************/
 #pragma once
 
-#include <Anisotropy/TetrahedronAnisotropicForceField.h>
+#include <Anisotropy/component/forcefield/TetrahedronAnisotropicForceField.h>
 #include <sofa/core/topology/TopologyData.inl>
 
 #include <sofa/helper/ColorMap.h>
@@ -26,11 +26,10 @@
 #include <sofa/gl/gl.h>
 
 
-const unsigned int edgesInTetrahedronArray[6][2] = {{0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3}};
-
-
-namespace sofa::component::forcefield
+namespace anisotropy::forcefield
 {
+
+const unsigned int edgesInTetrahedronArray[6][2] = {{0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3}};
 
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(TetrahedronRestInformation &my_tinfo,
@@ -1225,4 +1224,4 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 }
 
 
-} // namespace sofa::component::forcefield
+}

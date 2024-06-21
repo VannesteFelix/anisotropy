@@ -15,7 +15,8 @@
 * Contact information: felix.vanneste@inria.information                       *
 ******************************************************************************/
 #pragma once
-#include <Anisotropy/config.h>
+
+#include <Anisotropy/component/initAnisotropy.h>
 
 #include <sofa/core/topology/TopologyData.h>
 //#include <sofa/core/topology/TopologyHandler.h>
@@ -31,15 +32,16 @@ template< class T > class MechanicalState;
 
 } // namespace sofa::core::behavior
 
-namespace sofa::component::forcefield
+namespace anisotropy::forcefield
 {
 
+using namespace sofa;
 using namespace sofa::defaulttype;
-using namespace core::topology;
+using namespace sofa::core::topology;
 using namespace sofa::type;
 
 template<class DataTypes>
-class SOFA_ANISOTROPY_API TetrahedronAnisotropicForceField : public core::behavior::ForceField<DataTypes>
+class TetrahedronAnisotropicForceField : public core::behavior::ForceField<DataTypes>
 {
 public:
     SOFA_CLASS(SOFA_TEMPLATE(TetrahedronAnisotropicForceField,DataTypes), SOFA_TEMPLATE(core::behavior::ForceField,DataTypes));
@@ -383,7 +385,7 @@ protected :
 };
 
 
-#if !defined(SOFA_COMPONENT_FORCEFIELD_TETRAHEDRONANISOTROPICFORCEFIELD_CPP)
+#if !defined(ANISOTROPY_COMPONENT_FORCEFIELD_TETRAHEDRONANISOTROPICFORCEFIELD_CPP)
 extern template class SOFA_ANISOTROPY_API TetrahedronAnisotropicForceField<defaulttype::Vec3Types>;
 #endif
-} // namespace sofa::component::forcefield
+}

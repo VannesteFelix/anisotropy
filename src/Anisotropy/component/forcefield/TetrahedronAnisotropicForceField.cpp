@@ -14,22 +14,23 @@
 *                                                                             *
 * Contact information: felix.vanneste@inria.information                       *
 ******************************************************************************/
-#define SOFA_COMPONENT_FORCEFIELD_TETRAHEDRONANISOTROPICFORCEFIELD_CPP
-#include <Anisotropy/TetrahedronAnisotropicForceField.inl>
+#define ANISOTROPY_COMPONENT_FORCEFIELD_TETRAHEDRONANISOTROPICFORCEFIELD_CPP
+#include <Anisotropy/component/forcefield/TetrahedronAnisotropicForceField.inl>
 
 #include <sofa/defaulttype/VecTypes.h>
 #include <sofa/core/ObjectFactory.h>
 
-namespace sofa::component::forcefield
+namespace anisotropy::forcefield
 {
 
 using namespace sofa::defaulttype;
+using namespace sofa::core;
 
 // Register in the Factory
-int TetrahedronAnisotropicForceFieldClass = core::RegisterObject("Tetrahedral finite elements")
+int TetrahedronAnisotropicForceFieldClass = RegisterObject("Tetrahedral finite elements")
         .add< TetrahedronAnisotropicForceField<Vec3Types> >()
         ;
 
 template class SOFA_ANISOTROPY_API TetrahedronAnisotropicForceField<Vec3Types>;
 
-} // sofa::component::forcefield
+}

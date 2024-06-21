@@ -2,6 +2,7 @@
 
 @PACKAGE_INIT@
 
+find_package(SoftRobots.Inverse QUIET REQUIRED)
 find_package(Sofa.Core REQUIRED)
 find_package(Sofa.Component.SolidMechanics.FEM.Elastic REQUIRED)
 
