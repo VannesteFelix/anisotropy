@@ -1,116 +1,26 @@
 # -*- coding: utf-8 -*-
-import os
-import math
-from math import pi
-
-from stlib3.scene import Scene
-from stlib3.physics.constraints import FixedBox
-from splib3.numerics import *
 import os, sys
-from splib3.objectmodel import setData
-from splib3.numerics import *
+import math
+
 import Sofa
-
-path = os.path.dirname(os.path.abspath(__file__))
-path_mesh = path + "/mesh/"
-# volumeMeshFileName = "mesh/cube_low_res.msh"
-volumeMeshFileName = path_mesh + "beam_150-15-15.msh"
+from stlib3.scene import Scene
+from splib3.numerics import *
+from splib3.numerics import *
 
 
-nbr_tretra = 189 #44
+from beam import *
 
-youngModulus= None
-poissonRatio= None
-shearModulusLongitudinal = None
-anisotropyDirections = None
+import yaml
+with open("mechaParam/anisotropyTransverse.yaml") as f:
+    param = yaml.safe_load(f)
 
-transverse_anisotropy_coef = None
-
+youngModulus = param["paramPaper"]["youngModulus"]["transverse"]
 
 def createScene(rootNode):
 
-    def cube(name="cube",translationY=0,rotation=[0,0,0],translation=[0,0,0],elasticitySymmetry='transverseIsotropic',ho=True,color=[0,0,0,1]):
-        # body = scene.createChild(name)
-
-        if ho:
-            e = Sofa.Core.Node(name)
-
-            e.addObject('MeshGmshLoader',
-                                      name='loader',
-                                      rotation=rotation,
-                                      translation=translation,#[0,-7.5+translationY,-7.5],
-                                      filename=volumeMeshFileName)
-            e.addObject('MeshTopology',
-                                      src='@loader',
-                                      name='container')
-
-            e.addObject('MechanicalObject',
-                                      name='dofs',
-                                      position=e.loader.position.getLinkPath(),
-                                      showObject=False,
-                                      showObjectScale=5.0)
-            e.addObject('UniformMass',
-                                      name="mass",
-                                      totalMass=0.032)
-
-            # ForceField components
-
-            high_fem = e.addObject('TetrahedronAnisotropicForceField', printLog=1,
-                                      name="Elasticity",  poissonRatio=poissonRatio,  youngModulus=youngModulus,
-                                      # integrationMethod='analytical',
-                                      # method='qr',
-                                      # forceAffineAssemblyForAffineElements=False,
-                                      # oneRotationPerIntegrationPoint=False,
-                                      # numericalIntegrationMethod='Tetrahedron Gauss',
-                                      # integrationOrder=1,
-                                      # transparency= 0.75,
-                                      drawHeterogeneousTetra=False)
-            high_fem.elasticitySymmetry   = 'transverseIsotropic'
-            high_fem.anisotropyParameters = transverse_anisotropy_coef
-            high_fem.anisotropyDirections = anisotropyDirections
-
-
-
-        else:
-            e = Sofa.Core.Node(name)
-
-            e.addObject('MeshGmshLoader',
-                                      name='loader',
-                                      rotation=rotation,
-                                      translation=[0,-7.5+translationY,-7.5],
-                                      filename=volumeMeshFileName)
-            e.addObject('MeshTopology',
-                                      src='@loader',
-                                      name='container')
-
-            e.addObject('MechanicalObject',
-                                      name='dofs',
-                                      position=e.loader.position.getLinkPath(),
-                                      showObject=False,
-                                      showObjectScale=5.0)
-            e.addObject('UniformMass',
-                                      name="mass",
-                                      totalMass=0.032)
-
-            # ForceField components
-
-            e.addObject('TetrahedronFEMForceField',#printLog=1
-                                      name="linearElasticBehavior",
-                                      youngModulus=youngModulus,
-                                      poissonRatio=poissonRatio,
-                                      method="large")
-
-        FixedBox(atPositions=[0, -8+translationY, -8, 1, 8+translationY, 8], applyTo=e,
-                 doVisualization=True)
-
-        setData(e.dofs, showObject=True, showObjectScale=1.8,drawMode=1, showColor=color)
-
-        return e
-
-
     scene = Scene(rootNode, gravity=[0.0, 0.0,-98100], dt=0.01, iterative=True, 
       plugins=["Anisotropy","SofaMatrix"])
-    scene.addObject('BackgroundSetting', color=[1,1,1])
+    # scene.addObject('BackgroundSetting', color=[1,1,1])
     scene.addMainHeader()
     scene.Simulation.TimeIntegrationSchema.rayleighMass = 0.1
     scene.Simulation.TimeIntegrationSchema.rayleighStiffness = 0.1
@@ -124,91 +34,67 @@ def createScene(rootNode):
     # scene.Simulation.addObject("GlobalSystemMatrixImage")
 
     scene.Settings.mouseButton.stiffness = 10
-    scene.VisualStyle.displayFlags = "showBehavior showForceFields"
-
-    totalMass=1
+    scene.VisualStyle.displayFlags = "showForceFields"
 
 
-    #### REF    ############################################
-    youngModulus= 1390
-    poissonRatio= 0.26162
-    # youngModulus= 800
-    # poissonRatio= 0.4
-    # c = cube(name="isotropic",ho=False,color=[1,0,0,1])
-    # scene.Modelling.addChild(c)
-    # scene.Simulation.addChild(c)
 
-    #### REF USING ANISOTROPY   ############################
-    # youngModulusTransverse = 800 #1170
-    # poissonRatioTransverse = 0.4 #(yz)
-    # youngModulusLongitudinal = 30 # youngModulusTransverse
-    # poissonRatioTransverseLongitudinal = 0.2 # poissonRatioTransverse
-    # shearModulusLongitudinal = youngModulusTransverse / (2*(1+poissonRatioTransverse))
+    toSimulate = []
+    ################################################ REF Isotrope
+    mechaParam = MechaParam(param["isotropic"])
+    toSimulate.append(  Beam(name="isotropic",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='isotropic').addModel()
+                                                       .attach()  )
 
-    youngModulusTransverse = 1390 #1170
-    poissonRatioTransverse = 0.26162 #(yz)
-    youngModulusLongitudinal = 20 # 94.22
-    poissonRatioTransverseLongitudinal = 0.4161  #(zx)
-    shearModulusLongitudinal = 16.28215
-    poissonRatioLongitudinalTransverse = 0.02975 #(xy)
+    ################################################ REF Isotrope with anisotropic ff
+    mechaParam.setDirections([[0.25,0.5,0]])
+    toSimulate.append(  Beam(name="isotropic",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
-    # youngModulusTransverse = 1390
-    # poissonRatioTransverse = 0.26162 #(yz)
-    # youngModulusLongitudinal = youngModulusTransverse
-    # poissonRatioTransverseLongitudinal = poissonRatioTransverse
-    # shearModulusLongitudinal = 80
-    # poissonRatioLongitudinalTransverse = poissonRatioTransverseLongitudinal
-    ################################################
+    ################################################ REF Using Contol points
+    mechaParam.setCP([[44,youngModulus, youngModulus ,radians(45),radians(0)],
+                      [45,youngModulus, youngModulus ,radians(90),radians(0)]])
+    toSimulate.append(  Beam(name="isotropic with CP",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
-    youngModulus= [youngModulusTransverse]*nbr_tretra
-    poissonRatio= [poissonRatioTransverse]*nbr_tretra
-    anisotropyDirections = [[0.25,0.5,0]]*nbr_tretra
-    transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
-    # transverse_anisotropy_coef = [[2,youngModulusTrans verse,poissonRatioTransverse, shearModulusLongitudinal]]*nbr_tretra
+    ################################################ Transverse right
+    mechaParam = MechaParam(param["paramPaper"])
+    mechaParam.setDirections([[0.25,0.5,0]])
+    toSimulate.append(  Beam(name="Transverse right",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
-    c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,0,1,1],translation=[0,-7.5,-7.5],translationY=0)
-    scene.Modelling.addChild(c)
-    scene.Simulation.addChild(c)
-    ####################################################
-    anisotropyDirections = [[-0.25,0.5,0]]*nbr_tretra
-    transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
+    ################################################ Transverse left
+    mechaParam.setDirections([[-0.25,0.5,0]])
+    toSimulate.append(  Beam(name="Transverse left",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
-    c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,1,0,1],translationY=0,translation=[0,-7.5,-7.5],rotation=[0,0,0])
-    scene.Modelling.addChild(c)
-    scene.Simulation.addChild(c)
-    ###################################################
-    # anisotropyDirections = [[0.25,-0.5,0]]*nbr_tretra
-    # transverse_anisotropy_coef = [[2,youngModulusLongitudinal,poissonRatioTransverseLongitudinal, shearModulusLongitudinal]]*nbr_tretra
+    ################################################ Transverse Using Contol points
+    mechaParam.setCP([[44,youngModulus, youngModulus-1200 ,radians(45),radians(0)],
+                      [45,youngModulus-300, youngModulus-500,radians(90),radians(0)]])
+    toSimulate.append(  Beam(name="Transverse CP 1",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
-    # c = cube(name="isotropic - using plugin",ho=True,elasticitySymmetry='transverseIsotropic',color=[1,0,0,1],translationY=0,translation=[0,-7.5,-7.5],rotation=[0,0,0])
-    # scene.Modelling.addChild(c)
-    # scene.Simulation.addChild(c)
+    ################################################ Transverse Using Contol points
+    mechaParam.setCP([[44,youngModulus, youngModulus-1200 ,radians(-45),radians(0)],
+                      [45,youngModulus-300, youngModulus-500,radians(-90),radians(0)]])
+    
+    toSimulate.append(  Beam(name="Transverse CP 2",color=[1,0,0,1],
+                        mechaParam=mechaParam,
+                        elasticitySymmetry='transverseIsotropic').addModel()
+                                                                 .attach()  )
 
 
-    ####################################################
-    # # transverseIsotropic # isotropic # cubic
-    # ####################################################
-    # youngModulus= [1390]*nbr_tretra
-    # poissonRatio= [0.26162]*nbr_tretra
-    # shearModulusLongitudinal = 550.879
-    # anisotropyDirections = [[1,1,0]]*nbr_tretra
-    #
-    # transverse_anisotropy_coef = [[4,1,poissonRatio[0], shearModulusLongitudinal]]*nbr_tretra
-    # cube(name="cubic",ho=True,elasticitySymmetry='cubic',color=[0,1,0,1])
-    # transverse_anisotropy_coef = [[2,youngModulus[0],poissonRatio[0], shearModulusLongitudinal]]*nbr_tretra
-    # cube(name="transverse",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,0,1,1])
-    # ####################################################
-    #
-    # ####################################################
-    # youngModulus= 1390
-    # poissonRatio= 0.26162
-    # shearModulusLongitudinal = 550.879
-    # anisotropyDirections = [[1,0,0]]
-    # translationY=40
-    #
-    # transverse_anisotropy_coef = [4,1,poissonRatio, shearModulusLongitudinal]
-    # cube(name="iso",ho=True,elasticitySymmetry='isotropic',color=[1,0,0,1],translationY=translationY)
-    # cube(name="cubic",ho=True,elasticitySymmetry='cubic',color=[0,1,0,1],translationY=translationY)
-    # transverse_anisotropy_coef = [2,youngModulus-1e-11,poissonRatio, shearModulusLongitudinal] #-0.000000000001 # poissonRatio-0.0000000000000001
-    # cube(name="transverse",ho=True,elasticitySymmetry='transverseIsotropic',color=[0,0,1,1],translationY=translationY)
-    # ####################################################
+    for beam in toSimulate: 
+        scene.Modelling.addChild(beam)
+        scene.Simulation.addChild(beam)
+    

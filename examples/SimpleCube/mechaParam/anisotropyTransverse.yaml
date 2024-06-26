@@ -1,0 +1,21 @@
+paramPaper:
+    youngModulus:
+        transverse: 1390
+        longitudinal: 94.22
+    poissonRatio:
+        transverse: 0.26162
+        transverseLongitudinal: 0.4161
+        longitudinalTransverse: 0.02975
+    shearModulus:
+        longitudinal: 16.28215
+
+isotropic:
+    youngModulus:
+        transverse: 1390
+        longitudinal: 1390
+    poissonRatio:
+        transverse: 0.26162
+        transverseLongitudinal: 0.26162
+        longitudinalTransverse: 0.26162
+    shearModulus:
+        longitudinal: 550.879028551
