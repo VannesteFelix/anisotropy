@@ -154,7 +154,7 @@ protected:
 
     void parseNode(sofa::simulation::Node *node);
 
-    void addParamConstraint(unsigned int constraintId,DataMatrixDeriv &cMatrix,VecDeriv &partialDeriv,bool set=false);
+    void addParamConstraint(unsigned int constraintId,DataMatrixDeriv &cMatrix,VecDeriv &partialDeriv);
 
     void saveValuesToFile(const bool append);
 

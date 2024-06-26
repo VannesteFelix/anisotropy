@@ -78,7 +78,11 @@ void AnisotropyControlPointActuator<DataTypes>::init()
 //    msg_info() << "ENTER init ";
     d_componentState = ComponentState::Valid;
     Inherit1::init();
-    if( not l_masterActuator.empty()){} // this->m_constraintType = softrobots::behavior::SoftRobotsBaseConstraint::SLAVE;
+    if( not l_masterActuator.empty())
+    {
+        msg_info() << "I am a slave";
+        this->m_constraintType = softrobots::behavior::SoftRobotsBaseConstraint::SLAVE;
+    }
     else
     {
         m_isSlave = false;
@@ -362,7 +366,7 @@ void AnisotropyControlPointActuator<DataTypes>::bwdInit()
             }
             k++;
         }
-//        msg_info()<<m_currentParamValue;
+        msg_info()<<m_currentParamValue;
         initLimit();
     }
     else
@@ -372,13 +376,13 @@ void AnisotropyControlPointActuator<DataTypes>::bwdInit()
     }
 
 
-//    if(m_isSlave)
-//    {
-//        msg_info() << "-----------------------------------> ADD MASTER :" << l_masterActuator.getLinkedPath();
-//        m_masterActuator = l_masterActuator.get();
-////        msg_info() << "-----------------------------------> ADD MASTER : "<< m_masterActuator->name;
-//    }
-//    else
+    if(m_isSlave)
+    {
+        msg_info() << "-----------------------------------> ADD MASTER :" << l_masterActuator.getLinkedPath();
+       // m_masterActuator = l_masterActuator.get();
+    //        msg_info() << "-----------------------------------> ADD MASTER : "<< m_masterActuator->name;
+    }
+    else
     if(not m_isSlave)
     {
         simulation::Node* root;
@@ -447,7 +451,7 @@ void AnisotropyControlPointActuator<DataTypes>::parseNode(sofa::simulation::Node
 template<class DataTypes>
 void AnisotropyControlPointActuator<DataTypes>::addParamConstraint(unsigned int constraintId,
                                                        DataMatrixDeriv &cMatrix,
-                                                       VecDeriv &partialDeriv,bool set)
+                                                       VecDeriv &partialDeriv)
 {
     MatrixDeriv& matrix = *cMatrix.beginEdit();
     MatrixDerivRowIterator rowIterator = matrix.writeLine(constraintId);
@@ -471,7 +475,7 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
                                                             unsigned int &cIndex,
                                                             const DataVecCoord &x)
 {
-//    msg_info() << "ENTER buildConstraintMatrix for " <<  this->name.getValue() << "   ----------------------------";
+    // msg_info() << "ENTER buildConstraintMatrix for " <<  this->name.getValue() << "   ----------------------------";
     sofa::helper::AdvancedTimer::stepBegin("buildConstraintMatrix_"+this->name.getValue());
 
 
@@ -485,7 +489,7 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
     {
         updateLimit();
 
-//        msg_info() << "MASTER";
+        // msg_info() << "MASTER";
         m_constraintId = cIndex;
 //        m_nbLines = d_anisotropyParameter.getValue().size()*m_listCPToWorkOn.size();
         cIndex += m_nbLines;
@@ -499,11 +503,11 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
         sofa::Index nbTasks = l_slavesActuator.size()+1;
 
         tasks.resize(nbTasks, AnisotropyControlPointActuator::ComputeDfXTask(&status));
-//        msg_info() << "task created " << nbTasks;
+        // msg_info() << "task created " << nbTasks;
 
         tasks[0].set(this);
 //        tasks[0].run();
-//        msg_info() << "TASK FOR "<< this->name.getValue();
+        // msg_info() << "TASK FOR "<< this->name.getValue();
         taskScheduler->addTask(&tasks[0]);
 
         size_t i = 1;
@@ -516,7 +520,7 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
 //            tasks[i].run();
             i++;
 
-//            msg_info() << "TASK FOR "<< slave->name.getValue();
+            // msg_info() << "TASK FOR "<< slave->name.getValue();
         }
          taskScheduler->workUntilDone(&status);
 
@@ -538,7 +542,8 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
         {
             if (anisotropyParameter[k][j])
             {
-                addParamConstraint(m_constraintId+index,cMatrix,partialDeriv[index],true);
+                // msg_info() << controlPoint << "  " << m_constraintId << "   " << index;
+                addParamConstraint(m_constraintId+index,cMatrix,partialDeriv[index]);
                 index++;
             }
         }
@@ -578,7 +583,7 @@ void AnisotropyControlPointActuator<DataTypes>::getConstraintViolation(const Con
 template<class DataTypes>
 void AnisotropyControlPointActuator<DataTypes>::storeResults(vector<double> &lambda, vector<double> &delta)
 {
-//    msg_info() << "ENTER storeResults " <<  this->name.getValue() << "   ----------------------------";
+    // msg_info() << "ENTER storeResults " <<  this->name.getValue() << "   ----------------------------";
     SOFA_UNUSED(delta);
 
     if(d_componentState.getValue() == ComponentState::Invalid)
@@ -698,7 +703,7 @@ void AnisotropyControlPointActuator<DataTypes>::storeResults(vector<double> &lam
 
 
 
-//    msg_info() << "EXIT storeResults " <<  this->name.getValue() << "   ----------------------------";
+    // msg_info() << "EXIT storeResults " <<  this->name.getValue() << "   ----------------------------";
 }
 
 template<class DataTypes>

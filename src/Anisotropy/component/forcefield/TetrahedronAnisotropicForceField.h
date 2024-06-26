@@ -318,8 +318,9 @@ public:
 
     void updateTopologyInformation();
     void setMechanicalParametersFromControlPoints(size_t eltIndex,Tetra indexArray);
-    type::vector<std::pair<Real, int> > generateListOfNorm(Coord tetraBarycenter);
-    void IDWInterpolationBewteenControlPoints(type::vector<std::pair<Real, int> > listOfNormWeighted,Real* dataToInterpolate,size_t indexData);
+    type::vector<std::pair<Real, int> > generateListOfNorm(const Coord tetraBarycenter);
+    void IDWdata(type::vector<std::pair<Real, int> > listOfNormWeighted,Real& dataToInterpolate,size_t indexData);
+    void IDWdirection(type::vector<std::pair<Real, int> > listOfNormWeighted, Coord &dir);
 
     virtual Real getLambda() const { return lambda;}
     virtual Real getMu() const { return mu;}

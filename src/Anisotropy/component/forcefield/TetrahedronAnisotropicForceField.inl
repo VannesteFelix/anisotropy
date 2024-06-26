@@ -31,59 +31,6 @@ namespace anisotropy::forcefield
 
 const unsigned int edgesInTetrahedronArray[6][2] = {{0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3}};
 
-template<class DataTypes>
-void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(TetrahedronRestInformation &my_tinfo,
-                                                                      const Tetrahedron &tt)
-{
-    // set array to zero
-    std::fill(my_tinfo.stiffnessVector.begin(), my_tinfo.stiffnessVector.end(), Mat3x3());
-
-
-    typename DataTypes::Coord point[4];
-    const typename DataTypes::VecCoord &restPosition = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
-
-    // store the point position
-    for (size_t j = 0; j < 4; ++j)
-        point[j] = (restPosition)[tt[j]];
-
-    size_t k, l;
-    for (size_t  j = 0; j < 6; ++j)
-    {
-        k = edgesInTetrahedronArray[j][0];
-        l = edgesInTetrahedronArray[j][1];
-
-        // store the rest edge vector
-        my_tinfo.restEdgeVector[j] = point[l] - point[k];
-    }
-
-    /// compute the rotation matrix of the initial tetrahedron for the QR decomposition
-    /// Fill restRotation with previously computed restEdgeVector
-    computeQRRotation(my_tinfo.restRotation, my_tinfo.restEdgeVector);
-
-    /// Filling tetrahedronInf->stiffnessVector thanks to previous E decomposition
-    /// Important: the stiffnessVector is here defined on the edges of tetra
-    computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
-
-//    msg_info("my_tinfo.stiffnessVector") << my_tinfo.stiffnessVector;
-}
-
-
-
-template <class DataTypes>
-void TetrahedronAnisotropicForceField<DataTypes>::updateStiffnessVector(const Tetrahedron &tetra,TetrahedronRestInformation &my_tinfo)
-{
-    const typename DataTypes::VecCoord &position = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
-
-    // set array to zero
-    std::fill(my_tinfo.stiffnessVector.begin(), my_tinfo.stiffnessVector.end(), Mat3x3());
-
-    typename DataTypes::Coord point[4];
-    // store the point position
-    for (size_t j = 0; j < 4; ++j)
-        point[j] = (position)[tetra[j]];
-
-    computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
-}
 
 template <class DataTypes>
 TetrahedronAnisotropicForceField<DataTypes>::TetrahedronAnisotropicForceField()
@@ -97,7 +44,7 @@ TetrahedronAnisotropicForceField<DataTypes>::TetrahedronAnisotropicForceField()
                                                                                      "- for transverse symemetry --> anisotropyParameters == [youngModulusLongitudinal, poissonRatioTransverseLongitudinal, shearModulusTransverse]"))
     , d_anisotropyDirection(initData(&d_anisotropyDirection, "anisotropyDirections", "the directions of anisotropy"))
     , d_controlPoints(initData(&d_controlPoints,"controlPoints","controlPoints"))
-    , d_IDWDepth(initData(&d_IDWDepth,"IDWDepth","How many CP a data is interpolated upon"))
+    , d_IDWDepth(initData(&d_IDWDepth,2,"IDWDepth","How many CP a data is interpolated upon"))
     , d_meshRotation(initData(&d_meshRotation,"meshRotation",""))
     , d_drawHeterogeneousTetra(initData(&d_drawHeterogeneousTetra,true,"drawHeterogeneousTetra","Draw Heterogeneous Tetra in different color"))
     , d_drawDirection(initData(&d_drawDirection,true,"drawDirection","Draw different color for each direction"))
@@ -129,16 +76,14 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
     /// Init of tetrahedronInf which is a container which has, among other, mechanical info for each tetra:
     /// shapeVector, rotation, stiffnessVector ...
     _topology = this->getContext()->getMeshTopology();
+    const std::vector< Tetrahedron > &tetrahedronArray = this->_topology->getTetrahedra();
     type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
     tetrahedronInf.resize(_topology->getNbTetrahedra());
-
-    const std::vector< Tetrahedron > &tetrahedronArray = this->_topology->getTetrahedra();
-
 
     /// We are putting an elasticity tensor (E) for each tetra of our topology
     /// This 4d order elasticity tensor will be projected thanks to Kelvin modes
     /// ref : On Inverse Form Finding for Anisotropic Materials in the Logarithmic Strain Space, Sandrine Germain, 2013
-    if (d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra())
+    if (d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra() or d_controlPoints.isSet())
     {
         /// Each tetra E will be decompose thanks to its modes.
         /// This decomposition will result in :
@@ -147,6 +92,12 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
         /// Then we have this decomposition: E = sum([k=1->N_modes] of lambda_k * P_k) (4.3)
         for (size_t i=0; i<_topology->getNbTetrahedra(); ++i)
         {
+            if (d_controlPoints.getValue().size() > 0)
+            {
+                setMechanicalParametersFromControlPoints(i,tetrahedronArray[i]);
+                // msg_info() << d_anisotropyParameter.getValue()[i];
+                // msg_info() << d_anisotropyDirection.getValue()[i];
+            }
             /// Given as entries, mechanical values (up to 9 if Orthotropic):
             /// (Young_Modulus_(x/y/z), Poisson_ratio_(x/y/z), Shear_Modulus_(x/y/z)
             /// We initialize each tetrahedronInf with the eigen tensors/values associated
@@ -157,7 +108,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
         }
     }
     else
-        msg_error() << "anisotropyDirection dim != NbTetrahedra in mesh";
+        msg_error() << "anisotropyDirection dim != NbTetrahedra in mesh " << d_controlPoints.isSet();
 
 
     tetrahedronInfo.endEdit();
@@ -171,7 +122,6 @@ inline void TetrahedronAnisotropicForceField<DataTypes>::reinit()
 {
 //    updateStiffnessVectorWithCP();
 }
-
 
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::updateTopologyInformation()
@@ -203,18 +153,45 @@ void TetrahedronAnisotropicForceField<DataTypes>::updateTopologyInformation()
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::setMechanicalParametersFromControlPoints(size_t eltIndex,Tetra indexArray)
 {
+    // msg_info() << "IDW ELT " << eltIndex;
+
+    AnisotropyDirectionArray &dir = *d_anisotropyDirection.beginEdit();
+    type::vector<ParameterArray> &param = *d_anisotropyParameter.beginEdit();
+    type::vector<Real> &youngModulus = *d_youngModulus.beginEdit();
+    type::vector<Real> &poissonRatio = *d_poissonRatio.beginEdit();
+
+    if (updateTopologyInfo and eltIndex == 0)
+    {
+        dir.resize(_topology->getNbTetrahedra());
+        param.resize(_topology->getNbTetrahedra());
+        youngModulus.resize(_topology->getNbTetrahedra());
+        poissonRatio.resize(_topology->getNbTetrahedra());
+        for (size_t i=0; i<_topology->getNbTetrahedra(); ++i)
+        {
+            param[i] = {2,0.,0.4161,0.};
+            poissonRatio[i] = 0.4161; // TEMPORARY HARD SET
+            // param[i] = {2,0.,0.26162,0.};
+            // poissonRatio[i] = 0.26162; // TEMPORARY HARD SET
+        }
+    }
+
     const VecCoord& x = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
-    Coord tetraBarycenter= (x[indexArray[0]] + x[indexArray[1]] + x[indexArray[2]] + x[indexArray[3]]) / 4;
-    Real* dataToInterpolate;
-    size_t indexData;
+    const Coord tetraBarycenter= (x[indexArray[0]] + x[indexArray[1]] + x[indexArray[2]] + x[indexArray[3]]) / 4;
 
     type::vector<std::pair<Real, int> > listOfNorm = generateListOfNorm(tetraBarycenter);
-    IDWInterpolationBewteenControlPoints(listOfNorm,dataToInterpolate,indexData);
 
+    IDWdata(listOfNorm,youngModulus[eltIndex],1); // Young Modulus Transverse
+    IDWdata(listOfNorm,param[eltIndex][1],2);     // Young Modulus Longituinal
+    IDWdirection(listOfNorm,dir[eltIndex]);       // direction of transverse anisotropy vec normalized Coord(x,y,z)
+
+    d_anisotropyDirection.endEdit();
+    d_anisotropyParameter.endEdit();
+    d_youngModulus.endEdit();
+    d_poissonRatio.endEdit();
 }
 
 template <class DataTypes>
-type::vector<std::pair< typename TetrahedronAnisotropicForceField<DataTypes>::Real, int>> TetrahedronAnisotropicForceField<DataTypes>::generateListOfNorm(Coord tetraBarycenter)
+type::vector<std::pair< typename TetrahedronAnisotropicForceField<DataTypes>::Real, int>> TetrahedronAnisotropicForceField<DataTypes>::generateListOfNorm(const Coord tetraBarycenter)
 {
     const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
     type::vector<Real> listOfNorm;
@@ -241,209 +218,67 @@ type::vector<std::pair< typename TetrahedronAnisotropicForceField<DataTypes>::Re
     {
         vp[i].first /= sumWeights;
     }
+
+    return vp;
 }
 
 template <class DataTypes>
-void TetrahedronAnisotropicForceField<DataTypes>::IDWInterpolationBewteenControlPoints(type::vector<std::pair<Real, int> > listOfNormWeighted, Real* dataToInterpolate, size_t indexData)
+void TetrahedronAnisotropicForceField<DataTypes>::IDWdata(type::vector<std::pair<Real, int> > listOfNormWeighted, Real& dataToInterpolate, size_t indexData)
 {
-
-    // Real &data = dataToInterpolate;
-
-    // const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
-
-    // Real meshRotation = d_meshRotation.getValue();
-
-
-    // type::vector<Coord> listOfDir;
-    // for (size_t j=0;j<controlPoints.size();j++)
-    // {
-    //     /// DON'T FORGET MESH ROTATION FOR BEAMS
-    //     //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][4]+meshRotation)));
-    //     /// ELSE
-    //     //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4])));
-    //     Coord tmp = Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4]));
-    //     /// MESH ROTATION AROUND X AXIS
-    //     Real y = tmp[1];
-    //     tmp[1] = tmp[1]*cos(meshRotation)-tmp[2]*sin(meshRotation);
-    //     tmp[2] = y*sin(meshRotation)+tmp[2]*cos(meshRotation);
-    //     listOfDir.push_back(tmp);
-    // }
-
-    // for(size_t i=0;i<d_IDWDepth.getValue();i++)
-    // {
-    //     data += controlPoints[listOfNormWeighted[i].second][indexData] * listOfNormWeighted[i].first;
-    // }
+    Real &data = dataToInterpolate;
+    const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
+    // msg_info() << "indexData " << indexData << "    " << controlPoints[listOfNormWeighted[0].second][indexData];
+    for(size_t i=0;i<d_IDWDepth.getValue();i++)
+    {
+        data += controlPoints[listOfNormWeighted[i].second][indexData] * listOfNormWeighted[i].first;
+    }
 }
 
+template <class DataTypes>
+void TetrahedronAnisotropicForceField<DataTypes>::IDWdirection(type::vector<std::pair<Real, int> > listOfNormWeighted, Coord &dir)
+{
+    const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
+    const Real meshRotation = d_meshRotation.getValue();
 
-// template <class DataTypes>
-// void TetrahedronAnisotropicForceField<DataTypes>::IDWInterpolationBewteenControlPoints()
-// {
-//     //    msg_info() << "-------------------------------- ENTER IDWInterpolationBewteenControlPoints";
-//     const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
+    type::vector<Coord> listOfDir;
+    for (size_t j=0;j<controlPoints.size();j++)
+    {
+        /// DON'T FORGET MESH ROTATION FOR BEAMS
+        //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][4]+meshRotation)));
+        /// ELSE
+        //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4])));
+        Coord tmp = Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4]));
+        /// MESH ROTATION AROUND X AXIS
+        Real y = tmp[1];
+        tmp[1] = tmp[1]*cos(meshRotation)-tmp[2]*sin(meshRotation);
+        tmp[2] = y*sin(meshRotation)+tmp[2]*cos(meshRotation);
+        listOfDir.push_back(tmp);
+    }
 
-//     AnisotropyDirectionArray &dir = *d_anisotropyDirection.beginEdit();
-//     type::vector<ParameterArray> &param = *d_anisotropyParameter.beginEdit();
-//     type::vector<Real> &youngModulus = *d_youngModulus.beginEdit();
-//     dir.resize(_topology->getNbTetrahedra());
-//     param.resize(_topology->getNbTetrahedra());
-//     youngModulus.resize(_topology->getNbTetrahedra());
+    Real d_x=0,d_y=0,d_z=0;
 
-//     Real Yt,Yl,yaw,roll,d_x,d_y,d_z;
-//     Tetra indexArray;
-
-//     Real meshRotation = d_meshRotation.getValue();
-
-//     if (controlPoints.size() > 1)
-//     {
-
-//         type::vector<Coord> listOfDir;
-//         type::vector<int> listCPIndices;
-//         for (size_t j=0;j<controlPoints.size();j++)
-//         {
-//             /// DON'T FORGET MESH ROTATION FOR BEAMS
-//             //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][3])*cos(controlPoints[j][4]+meshRotation),sin(controlPoints[j][4]+meshRotation)));
-//             /// ELSE
-//             //listOfDir.push_back(Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4])));
-//             Coord tmp = Coord(cos(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][3])*cos(controlPoints[j][4]),sin(controlPoints[j][4]));
-//             /// MESH ROTATION AROUND X AXIS
-//             Real y = tmp[1];
-//             tmp[1] = tmp[1]*cos(meshRotation)-tmp[2]*sin(meshRotation);
-//             tmp[2] = y*sin(meshRotation)+tmp[2]*cos(meshRotation);
-//             listOfDir.push_back(tmp);
-//             listCPIndices.push_back(controlPoints[j][0]);
-//         }
-
-//         const VecCoord& x = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
-
-//         for(size_t i=0; i<_topology->getNbTetrahedra(); ++i)
-//         {
-//             //            auto it = find(listCPIndices.begin(), listCPIndices.end(), i);
-//             //            msg_info() << "------------------------ indice " << i;
-
-//             //            /// if tetrahadra is not a cp
-//             //            if (it == listCPIndices.end())
-//             //            {
-
-//             indexArray = highOrderTetraGeo->getTopologyContainer()->getGlobalIndexArrayOfControlPoints(i);
-//             Coord tmp = (x[indexArray[0]] + x[indexArray[1]] + x[indexArray[2]] + x[indexArray[3]]) / 4;
-//             type::vector<Real> listOfNorm;
-//             for (size_t j=0;j<controlPoints.size();j++)
-//             {
-//                 //                    indexArray= highOrderTetraGeo->getTopologyContainer()->getGlobalIndexArrayOfControlPoints(controlPoints[j][0]);
-//                 //                    Coord CP1 = (x[indexArray[0]] + x[indexArray[1]] + x[indexArray[2]] + x[indexArray[3]]) / 4;
-//                 //                    listOfNorm.push_back((tmp-CP1).norm());
-
-//                 listOfNorm.push_back((tmp-x[controlPoints[j][0]]).norm());
-//             }
-//             type::vector<Real> listOfNorm_tmp = listOfNorm;
-
-
-//             //                msg_info() << "------> " << listOfNorm;
-//             type::vector<std::pair<Real, int> > vp;
-//             sortArr(listOfNorm, listOfNorm.size(),&vp);
-//             //                    for (int i = 0; i < vp.size(); i++)
-//             //                    {
-//             //                        std::cout << vp[i].first << "\t"
-//             //                             << vp[i].second << std::endl;
-//             //                    }
-
-//             type::vector<Real> listOfNormWeighted;
-//             Real sumWeights = 0;
-//             size_t power = 2;
-//             size_t nbrCP = 2;
-//             for(Index i=0;i<nbrCP;i++)
-//             {
-//                 auto tmp = 1/(pow(vp[i].first,3));
-//                 listOfNormWeighted.push_back(tmp);
-//                 sumWeights += tmp;
-//             }
-//             //                for (auto& norm : listOfNorm)
-//             //                {
-//             //                    listOfNormWeighted.push_back(1/(pow(norm,3)));
-//             //                    sumWeights += 1/(pow(norm,2));
-//             //                }
-//             for (auto& norm : listOfNormWeighted)
-//             {
-//                 norm  /= sumWeights;
-//             }
-
-//             Real Yt=0,Yl=0,yaw=0,roll=0,d_x=0,d_y=0,d_z=0;
-//             //Real angle1=0,angle2=0;
-//             for(Index i=0;i<nbrCP;i++)
-//             {
-//                 //                    msg_info() << "--> "<<i;
-//                 Yt += controlPoints[vp[i].second][1] * listOfNormWeighted[i];
-//                 Yl += controlPoints[vp[i].second][2] * listOfNormWeighted[i];
-//                 //angle1 += cp[3] * listOfNormWeighted[index];
-//                 //angle2 += cp[4] * listOfNormWeighted[index];
-//                 d_x += listOfDir[vp[i].second][0] * listOfNormWeighted[i];
-//                 d_y += listOfDir[vp[i].second][1] * listOfNormWeighted[i];
-//                 d_z += listOfDir[vp[i].second][2] * listOfNormWeighted[i];
-//             }
-//             //                for (auto& cp : controlPoints)
-//             //                {
-//             //                    Yt += cp[1] * listOfNormWeighted[index];
-//             //                    Yl += cp[2] * listOfNormWeighted[index];
-//             //                    //angle1 += cp[3] * listOfNormWeighted[index];
-//             //                    //angle2 += cp[4] * listOfNormWeighted[index];
-//             //                    d_x += listOfDir[index][0] * listOfNormWeighted[index];
-//             //                    d_y += listOfDir[index][1] * listOfNormWeighted[index];
-//             //                    d_z += listOfDir[index][2] * listOfNormWeighted[index];
-//             //                    index++;
-//             //                }
-//             /// Update tetrahedron mechanical values
-//             dir[i] = Coord(d_x,d_y,d_z);
-//             param[i] = {2,Yl,0.4161,0.};
-//             youngModulus[i] = Yt;
-
-//             //            }
-//             //            else
-//             //            {
-//             //                int index = it - listCPIndices.begin();
-//             //                dir[i] = listOfDir[index];
-//             //                param[i] = {2,controlPoints[index][2],0.4161,0.};
-//             //                youngModulus[i] = controlPoints[index][1];
-//             //            }
-//         }
-//     }
-//     else
-//     {
-//         Coord dir0 = Coord(cos(controlPoints[0][3])*cos(controlPoints[0][4]+meshRotation),sin(controlPoints[0][3])*cos(controlPoints[0][4]+meshRotation),sin(controlPoints[0][4]+meshRotation));
-//         //        Coord dir0 = Coord(cos(controlPoints[0][3]+meshRotation)*cos(controlPoints[0][4]+meshRotation),sin(controlPoints[0][3]+meshRotation)*cos(controlPoints[0][4]+meshRotation),sin(controlPoints[0][4]+meshRotation));
-
-//         for(size_t i=0; i<_topology->getNbTetrahedra(); ++i)
-//         {
-//             dir[i] = dir0;
-//             param[i] = {2,controlPoints[0][2],0.4161,0.};
-//             youngModulus[i] = controlPoints[0][1];
-//         }
-//         //msg_info() << "dir0 ------------------> " << dir0;
-//     }
-//     d_anisotropyDirection.endEdit();
-//     d_anisotropyParameter.endEdit();
-//     d_youngModulus.endEdit();
-//     //    msg_info() << "-------------------------------- EXIT IDWInterpolationBewteenControlPoints";
-
-// }
-
+    for(size_t i=0;i<d_IDWDepth.getValue();i++)
+    {
+        d_x += listOfDir[listOfNormWeighted[i].second][0] * listOfNormWeighted[i].first;
+        d_y += listOfDir[listOfNormWeighted[i].second][1] * listOfNormWeighted[i].first;
+        d_z += listOfDir[listOfNormWeighted[i].second][2] * listOfNormWeighted[i].first;
+    }
+    dir = Coord(d_x,d_y,d_z);
+}
 
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size_t eltIndex,EigenTensors &eigenTensors , EigenValues &eigenValues)
 {
-//    msg_info() << "-------------------------------- ENTER computeKelvinModesForElts";
+    // msg_info() << "-------------------------------- ENTER computeKelvinModesForElts";
 
     if (elasticitySymmetry != ISOTROPIC)
     {
         Vec4 anisotropyParameter=d_anisotropyParameter.getValue()[eltIndex];
         // Vec10 anisotropyParameter=d_anisotropyParameter.getValue()[eltIndex];
-        //msg_info() << elasticitySymmetry;
-
         Real youngModulus = d_youngModulus.getValue()[eltIndex];
         Real poissonRatio = d_poissonRatio.getValue()[eltIndex];
 
         Coord n = d_anisotropyDirection.getValue()[eltIndex];
-
         n/=n.norm();
         Coord v1,v2;
         if ((n[0]!=0) || (n[1]!=0)) {
@@ -559,7 +394,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             //msg_info() << "Ns3 " << Ns3;
         }
         else if (anisotropyParameter[0]==TRANSVERSE_ISOTROPIC) {
-
             // Real youngModulusTransverse = youngModulus;
             // Real poissonRatioTransverse = poissonRatio;
             // Real youngModulusLongitudinal = anisotropyParameter[1];
@@ -584,61 +418,61 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-            // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
-            long double youngModulusTransverse = youngModulus;
-            long double poissonRatioTransverse = poissonRatio;
-            long double youngModulusLongitudinal=anisotropyParameter[1];
+            // // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
+            // long double youngModulusTransverse = youngModulus;
+            // long double poissonRatioTransverse = poissonRatio;
+            // long double youngModulusLongitudinal=anisotropyParameter[1];
 
-            long double poissonRatioTransverseLongitudinal=anisotropyParameter[2];
-            //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
+            // long double poissonRatioTransverseLongitudinal=anisotropyParameter[2];
+            // //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
 
-            long double poissonRatioLongitudinalTransverse=poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
+            // long double poissonRatioLongitudinalTransverse=poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
 
-            //Real shearModulusLongitudinal=anisotropyParameter[3];
-            //Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
-            long double shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioLongitudinalTransverse));
+            // //Real shearModulusLongitudinal=anisotropyParameter[3];
+            // //Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
+            // long double shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioLongitudinalTransverse));
 
 
-            //if (poissonRatioLongitudinalTransverse>0.5)
-            //    poissonRatioLongitudinalTransverse = 0.5;
+            // //if (poissonRatioLongitudinalTransverse>0.5)
+            // //    poissonRatioLongitudinalTransverse = 0.5;
 
-            long double gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
+            // long double gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
 
-            long double c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
-            long double c33=youngModulusLongitudinal*gamma*(1-pow(poissonRatioTransverse,2));
+            // long double c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
+            // long double c33=youngModulusLongitudinal*gamma*(1-pow(poissonRatioTransverse,2));
 
-            long double c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
-            long double c55= shearModulusLongitudinal; //c44; // = c66
-            long double c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
+            // long double c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
+            // long double c55= shearModulusLongitudinal; //c44; // = c66
+            // long double c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
 
-            // STABLE
-            long double c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
-            // UNSTABLE BUT CORRECT FORMULATION !!?
-            // long double c13 = youngModulusLongitudinal*gamma*(poissonRatioTransverseLongitudinal+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
+            // // STABLE
+            // long double c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
+            // // UNSTABLE BUT CORRECT FORMULATION !!?
+            // // long double c13 = youngModulusLongitudinal*gamma*(poissonRatioTransverseLongitudinal+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
 
 
             ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-            // // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
-            // Real youngModulusTransverse = youngModulus;
-            // Real poissonRatioTransverse = poissonRatio;
-            // Real youngModulusLongitudinal=anisotropyParameter[1];
-            // Real poissonRatioTransverseLongitudinal=anisotropyParameter[2];
-            // Real shearModulusLongitudinal=anisotropyParameter[3];
-            // //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
-            // //            Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
+            // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
+            Real youngModulusTransverse = youngModulus;
+            Real poissonRatioTransverse = poissonRatio;
+            Real youngModulusLongitudinal=anisotropyParameter[1];
+            Real poissonRatioTransverseLongitudinal=anisotropyParameter[2];
+            Real shearModulusLongitudinal=anisotropyParameter[3];
+            //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
+            //            Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
 
-            // Real poissonRatioLongitudinalTransverse= poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
+            Real poissonRatioLongitudinalTransverse= poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
 
-            // Real gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
+            Real gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
 
-            // Real c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
-            // Real c33=youngModulusLongitudinal*gamma*(1-poissonRatioTransverse*poissonRatioTransverse);
-            // Real c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
-            // Real c55= c44; // shearModulusLongitudinal; // = c66
-            // Real c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
-            // Real c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
+            Real c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
+            Real c33=youngModulusLongitudinal*gamma*(1-poissonRatioTransverse*poissonRatioTransverse);
+            Real c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
+            Real c55= c44; // shearModulusLongitudinal; // = c66
+            Real c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
+            Real c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
 
 
             ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -760,10 +594,61 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
         }
 
     }
-    //    msg_info() << "-------------------------------- EXIT computeKelvinModesForElts";
+    // msg_info() << "-------------------------------- EXIT computeKelvinModesForElts";
 
 }
 
+template<class DataTypes>
+void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(TetrahedronRestInformation &my_tinfo,
+                                                                      const Tetrahedron &tt)
+{
+    // set array to zero
+    std::fill(my_tinfo.stiffnessVector.begin(), my_tinfo.stiffnessVector.end(), Mat3x3());
+
+
+    typename DataTypes::Coord point[4];
+    const typename DataTypes::VecCoord &restPosition = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+
+    // store the point position
+    for (size_t j = 0; j < 4; ++j)
+        point[j] = (restPosition)[tt[j]];
+
+    size_t k, l;
+    for (size_t  j = 0; j < 6; ++j)
+    {
+        k = edgesInTetrahedronArray[j][0];
+        l = edgesInTetrahedronArray[j][1];
+
+        // store the rest edge vector
+        my_tinfo.restEdgeVector[j] = point[l] - point[k];
+    }
+
+    /// compute the rotation matrix of the initial tetrahedron for the QR decomposition
+    /// Fill restRotation with previously computed restEdgeVector
+    computeQRRotation(my_tinfo.restRotation, my_tinfo.restEdgeVector);
+
+    /// Filling tetrahedronInf->stiffnessVector thanks to previous E decomposition
+    /// Important: the stiffnessVector is here defined on the edges of tetra
+    computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
+
+    // msg_info("my_tinfo.stiffnessVector") << my_tinfo.stiffnessVector;
+}
+
+template <class DataTypes>
+void TetrahedronAnisotropicForceField<DataTypes>::updateStiffnessVector(const Tetrahedron &tetra,TetrahedronRestInformation &my_tinfo)
+{
+    const typename DataTypes::VecCoord &position = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+
+    // set array to zero
+    std::fill(my_tinfo.stiffnessVector.begin(), my_tinfo.stiffnessVector.end(), Mat3x3());
+
+    typename DataTypes::Coord point[4];
+    // store the point position
+    for (size_t j = 0; j < 4; ++j)
+        point[j] = (position)[tetra[j]];
+
+    computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
+}
 
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::computeTetrahedronStiffnessEdgeMatrixForElts(TetraEdgesStiffness &stiffnessVector,const EigenTensors &eigenTensors , const EigenValues &eigenValues,const Coord point[4])
@@ -1215,6 +1100,20 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
             //            }
             for(unsigned int i=0 ; i<4 ; i++) points[i].clear();
 
+            bool drawControlPoints = true;
+            if(drawControlPoints)
+            {
+                const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
+                if (controlPoints.size() > 0)
+                {
+                    Coord CP;
+                    for (size_t j=0;j<controlPoints.size();j++)
+                    {
+                        vparams->drawTool()->drawSphere(x[controlPoints[j][0]], 1.5,type::RGBAColor(102./255.,0,102./255.,1.0));//type::RGBAColor(230./255.,32./255.,32./255.,.8));
+                    }
+                }
+
+            }
 
         }
         tetrahedronInfo.endEdit();
