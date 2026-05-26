@@ -51,7 +51,7 @@ using namespace sofa::type;
 using sofa::core::visual::VisualParams ;
 using sofa::linearalgebra::BaseVector ;
 using sofa::core::ConstraintParams ;
-using sofa::core::behavior::Actuator ;
+using softrobotsinverse::behavior::Actuator;
 using anisotropy::forcefield::TetrahedronAnisotropicForceField ;
 
 /**
@@ -169,7 +169,7 @@ private:
     /// the "this->" approach.
     using Actuator<DataTypes>::m_state ;
     using Actuator<DataTypes>::m_nbLines ;
-    using Actuator<DataTypes>::m_constraintId ;
+    using Actuator<DataTypes>::d_constraintIndex;
     using Actuator<DataTypes>::m_hasLambdaMin ;
     using Actuator<DataTypes>::m_hasLambdaMax ;
     using Actuator<DataTypes>::m_lambdaMax ;
@@ -290,7 +290,7 @@ private:
             DataVecDeriv f;
             VecDeriv f0;
 
-            f0.resize(actuator->m_state->read(core::ConstVecCoordId::position())->getValue().size());
+            f0.resize(actuator->m_state->read(core::vec_id::read_access::position)->getValue().size());
 
             f.setValue(f0);
             // AddForce(): computes internal forces with respect to given positions and known rest positions.
@@ -300,7 +300,7 @@ private:
             //                                                      const DataVecCoord& d_x,
             //                                                      const DataVecDeriv& /*d_v*/)
             DataVecDeriv v;
-            tetraForceField->addForce(nullptr, f, actuator->m_state->read(core::ConstVecCoordId::position())->getValue(), v);
+            tetraForceField->addForce(nullptr, f, actuator->m_state->read(core::vec_id::read_access::position)->getValue(), v);
             force = f.getValue();
         }
 

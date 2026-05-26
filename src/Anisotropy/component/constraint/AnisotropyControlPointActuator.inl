@@ -490,7 +490,7 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
         updateLimit();
 
         // msg_info() << "MASTER";
-        m_constraintId = cIndex;
+        d_constraintIndex = cIndex;
 //        m_nbLines = d_anisotropyParameter.getValue().size()*m_listCPToWorkOn.size();
         cIndex += m_nbLines;
 
@@ -514,7 +514,7 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
         for (auto& slave : l_slavesActuator)
         {
             slave->m_nbLines = m_nbLines;
-            slave->m_constraintId = m_constraintId;
+            slave->d_constraintIndex.setValue(d_constraintIndex.getValue());
             tasks[i].set(slave);
              taskScheduler->addTask(&tasks[i]);
 //            tasks[i].run();
@@ -542,8 +542,8 @@ void AnisotropyControlPointActuator<DataTypes>::buildConstraintMatrix(const Cons
         {
             if (anisotropyParameter[k][j])
             {
-                // msg_info() << controlPoint << "  " << m_constraintId << "   " << index;
-                addParamConstraint(m_constraintId+index,cMatrix,partialDeriv[index]);
+                // msg_info() << controlPoint << "  " << d_constraintIndex << "   " << index;
+                addParamConstraint(d_constraintIndex.getValue()+index,cMatrix,partialDeriv[index]);
                 index++;
             }
         }
@@ -571,10 +571,10 @@ void AnisotropyControlPointActuator<DataTypes>::getConstraintViolation(const Con
         return;
 
     SOFA_UNUSED(cParams);
-//    msg_info()<<m_constraintId << "  " << m_nbLines;
+//    msg_info()<<d_constraintIndex << "  " << m_nbLines;
     for(size_t i=0;i<m_nbLines;i++)
     {
-        resV->set(m_constraintId+i, 0.0);
+        resV->set(d_constraintIndex.getValue()+i, 0.0);
     }
 //    msg_info() << "--------------------------------------------------------------------------- OUT getConstraintViolation";
 }

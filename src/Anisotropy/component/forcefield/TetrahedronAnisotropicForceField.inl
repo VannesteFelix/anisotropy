@@ -175,7 +175,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::setMechanicalParametersFromCon
         }
     }
 
-    const VecCoord& x = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+    const VecCoord& x = this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
     const Coord tetraBarycenter= (x[indexArray[0]] + x[indexArray[1]] + x[indexArray[2]] + x[indexArray[3]]) / 4;
 
     type::vector<std::pair<Real, int> > listOfNorm = generateListOfNorm(tetraBarycenter);
@@ -196,7 +196,7 @@ type::vector<std::pair< typename TetrahedronAnisotropicForceField<DataTypes>::Re
     const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
     type::vector<Real> listOfNorm;
 
-    const VecCoord& x = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+    const VecCoord& x = this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
 
     for (size_t j=0;j<controlPoints.size();j++)
     {
@@ -607,7 +607,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(Tetrahedro
 
 
     typename DataTypes::Coord point[4];
-    const typename DataTypes::VecCoord &restPosition = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+    const typename DataTypes::VecCoord &restPosition = this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
 
     // store the point position
     for (size_t j = 0; j < 4; ++j)
@@ -637,7 +637,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(Tetrahedro
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::updateStiffnessVector(const Tetrahedron &tetra,TetrahedronRestInformation &my_tinfo)
 {
-    const typename DataTypes::VecCoord &position = this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+    const typename DataTypes::VecCoord &position = this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
 
     // set array to zero
     std::fill(my_tinfo.stiffnessVector.begin(), my_tinfo.stiffnessVector.end(), Mat3x3());
@@ -768,7 +768,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
 
     VecDeriv& f        = *(dataF.beginEdit());
     const VecCoord& x  = dataX.getValue();
-    const VecCoord& x0= this->mstate->read(core::ConstVecCoordId::restPosition())->getValue();
+    const VecCoord& x0= this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
     sofa::type::vector<Coord> dp,force;
     size_t i,j,k,l;
     size_t v0,v1;
@@ -983,7 +983,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
         type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
         const VecElement * _indexedElements = & (_topology->getTetrahedra());
 
-        const VecCoord& x = this->mstate->read(core::ConstVecCoordId::position())->getValue();
+        const VecCoord& x = this->mstate->read(core::vec_id::read_access::position)->getValue();
 
         size_t i;
         size_t nbTetrahedra=_topology->getNbTetrahedra();
