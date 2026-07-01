@@ -52,11 +52,6 @@ TetrahedronAnisotropicForceField<DataTypes>::TetrahedronAnisotropicForceField()
     , lambda(0)
     , mu(0)
 {
-//numericalIntegrationMethod='Tetrahedron Gauss'
-//integrationMethod='analytical'
-//method="qr"
-//integrationOrder=1
-//orderDegree=1,
 }
 
 
@@ -69,9 +64,14 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
 
 
     if (d_anisotropy.getValue() == "transverseIsotropic")
-        elasticitySymmetry= TRANSVERSE_ISOTROPIC;
-    else
-        elasticitySymmetry= ISOTROPIC;
+        elasticitySymmetry = TRANSVERSE_ISOTROPIC;
+    else if (d_anisotropy.getValue() == "cubic")
+        elasticitySymmetry = CUBIC;
+    else {
+        if (d_anisotropy.getValue() != "isotropic")
+            msg_warning() << "Unknown elasticitySymmetry '" << d_anisotropy.getValue() << "', falling back to isotropic.";
+        elasticitySymmetry = ISOTROPIC;
+    }
 
     /// Init of tetrahedronInf which is a container which has, among other, mechanical info for each tetra:
     /// shapeVector, rotation, stiffnessVector ...
@@ -80,35 +80,57 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
     type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
     tetrahedronInf.resize(_topology->getNbTetrahedra());
 
-    /// We are putting an elasticity tensor (E) for each tetra of our topology
-    /// This 4d order elasticity tensor will be projected thanks to Kelvin modes
-    /// ref : On Inverse Form Finding for Anisotropic Materials in the Logarithmic Strain Space, Sandrine Germain, 2013
-    if (d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra() or d_controlPoints.isSet())
-    {
-        /// Each tetra E will be decompose thanks to its modes.
-        /// This decomposition will result in :
-        /// - 6 eigens values (lambda)
-        /// - 6 eigentensors (3x3 matrix) which when using the Kronecker product on themselves will give the projection operators (P).
-        /// Then we have this decomposition: E = sum([k=1->N_modes] of lambda_k * P_k) (4.3)
-        for (size_t i=0; i<_topology->getNbTetrahedra(); ++i)
-        {
-            if (d_controlPoints.getValue().size() > 0)
-            {
-                setMechanicalParametersFromControlPoints(i,tetrahedronArray[i]);
-                // msg_info() << d_anisotropyParameter.getValue()[i];
-                // msg_info() << d_anisotropyDirection.getValue()[i];
-            }
-            /// Given as entries, mechanical values (up to 9 if Orthotropic):
-            /// (Young_Modulus_(x/y/z), Poisson_ratio_(x/y/z), Shear_Modulus_(x/y/z)
-            /// We initialize each tetrahedronInf with the eigen tensors/values associated
-            computeKelvinModesForElts(i,tetrahedronInf[i].eigenTensors,tetrahedronInf[i].eigenValues);
+    /// We are putting an elasticity tensor (E) for each tetra of our topology.
+    /// It is decomposed via Kelvin modes into eigenvalues + eigentensors:
+    ///   E = sum([k=1->N_modes] of lambda_k * P_k)   (Germain 2013, Eq 4.3)
+    /// Two valid configurations:
+    ///   - controlPoints set: IDW interpolates per-tetra params (direction, E_T, E_L)
+    ///   - anisotropyDirections set with one entry per tetra: uniform or pre-assigned params
+    const bool hasControlPoints = d_controlPoints.isSet() && d_controlPoints.getValue().size() > 0;
+    const bool hasDirections    = d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra();
 
-            /// Init tetrahedronInf restRotation & stiffnessVector
-            initStiffnessVector(tetrahedronInf[i],tetrahedronArray[i]);
+    if (hasControlPoints || hasDirections)
+    {
+        const size_t nbTetras = _topology->getNbTetrahedra();
+        for (size_t i=0; i<nbTetras; ++i)
+        {
+            if (hasControlPoints)
+                setMechanicalParametersFromControlPoints(i, tetrahedronArray[i]);
+
+            if (i == 0)
+            {
+                if (d_anisotropyDirection.getValue().size() != nbTetras ||
+                    d_anisotropyParameter.getValue().size() != nbTetras ||
+                    d_youngModulus.getValue().size()         != nbTetras ||
+                    d_poissonRatio.getValue().size()         != nbTetras)
+                {
+                    msg_error() << "Size mismatch before computeKelvinModesForElts:"
+                                << " anisotropyDirection=" << d_anisotropyDirection.getValue().size()
+                                << ", anisotropyParameter=" << d_anisotropyParameter.getValue().size()
+                                << ", youngModulus=" << d_youngModulus.getValue().size()
+                                << ", poissonRatio=" << d_poissonRatio.getValue().size()
+                                << ", expected=" << nbTetras;
+                    tetrahedronInfo.endEdit();
+                    this->d_componentState.setValue(sofa::core::objectmodel::ComponentState::Invalid);
+                    return;
+                }
+            }
+
+            computeKelvinModesForElts(i, tetrahedronInf[i].eigenTensors, tetrahedronInf[i].eigenValues);
+            initStiffnessVector(tetrahedronInf[i], tetrahedronArray[i]);
         }
+        verifyStability();
+    }
+    else if (elasticitySymmetry == ISOTROPIC)
+    {
+        // No fiber direction needed — stiffness is built purely from Lamé coefficients (lambda, mu).
+        updateLameCoefficients();
+        for (size_t i = 0; i < _topology->getNbTetrahedra(); ++i)
+            initStiffnessVector(tetrahedronInf[i], tetrahedronArray[i]);
     }
     else
-        msg_error() << "anisotropyDirection dim != NbTetrahedra in mesh " << d_controlPoints.isSet();
+        msg_error() << "Neither anisotropyDirections (size=" << d_anisotropyDirection.getValue().size()
+                    << ", expected " << _topology->getNbTetrahedra() << ") nor controlPoints are set.";
 
 
     tetrahedronInfo.endEdit();
@@ -118,9 +140,21 @@ void TetrahedronAnisotropicForceField<DataTypes>::init()
 
 
 template <class DataTypes>
-inline void TetrahedronAnisotropicForceField<DataTypes>::reinit()
+void TetrahedronAnisotropicForceField<DataTypes>::reinit()
 {
-//    updateStiffnessVectorWithCP();
+    const std::vector<Tetrahedron>& tetrahedronArray = this->_topology->getTetrahedra();
+    type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
+
+    for (size_t i = 0; i < _topology->getNbTetrahedra(); ++i)
+    {
+        if (d_controlPoints.getValue().size() > 0)
+            setMechanicalParametersFromControlPoints(i, tetrahedronArray[i]);
+        computeKelvinModesForElts(i, tetrahedronInf[i].eigenTensors, tetrahedronInf[i].eigenValues);
+        updateStiffnessVector(tetrahedronArray[i], tetrahedronInf[i]);
+    }
+
+    tetrahedronInfo.endEdit();
+    verifyStability();
 }
 
 template <class DataTypes>
@@ -150,11 +184,12 @@ void TetrahedronAnisotropicForceField<DataTypes>::updateTopologyInformation()
     tetrahedronInfo.endEdit();
 }
 
+/// IDW interpolation of E_T, E_L, and fiber direction for one tetrahedron from d_controlPoints.
+/// Weights = 1/dist^3 normalized over the d_IDWDepth nearest CPs (see generateListOfNorm).
+/// ν_TL and G_L are NOT interpolated — Vec5 control points have no room for them (see seed block below).
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::setMechanicalParametersFromControlPoints(size_t eltIndex,Tetra indexArray)
 {
-    // msg_info() << "IDW ELT " << eltIndex;
-
     AnisotropyDirectionArray &dir = *d_anisotropyDirection.beginEdit();
     type::vector<ParameterArray> &param = *d_anisotropyParameter.beginEdit();
     type::vector<Real> &youngModulus = *d_youngModulus.beginEdit();
@@ -162,16 +197,23 @@ void TetrahedronAnisotropicForceField<DataTypes>::setMechanicalParametersFromCon
 
     if (updateTopologyInfo and eltIndex == 0)
     {
+        // Save user-provided scalar values before vectors are resized.
+        // IDW only interpolates E_T, E_L, and direction (Vec5 has no room for ν_TL or G_L).
+        // ν_T  comes from d_poissonRatio[0] (user-supplied, e.g. via Python poissonRatio=…).
+        // ν_TL and G_L come from d_anisotropyParameters[0][2..3] (user-supplied, or defaults below).
+        // To support spatially varying ν_TL/G_L, extend controlPoints to Vec7.
+        const Real defaultNuT  = poissonRatio.size() >= 1 ? poissonRatio[0] : Real(0.4161);
+        const ParameterArray defaultAnisoPar = param.size() >= 1
+                                               ? param[0]
+                                               : ParameterArray{2, 0., Real(0.4161), Real(0.)};
         dir.resize(_topology->getNbTetrahedra());
         param.resize(_topology->getNbTetrahedra());
         youngModulus.resize(_topology->getNbTetrahedra());
         poissonRatio.resize(_topology->getNbTetrahedra());
         for (size_t i=0; i<_topology->getNbTetrahedra(); ++i)
         {
-            param[i] = {2,0.,0.4161,0.};
-            poissonRatio[i] = 0.4161; // TEMPORARY HARD SET
-            // param[i] = {2,0.,0.26162,0.};
-            // poissonRatio[i] = 0.26162; // TEMPORARY HARD SET
+            param[i] = {defaultAnisoPar[0], 0., defaultAnisoPar[2], defaultAnisoPar[3]};
+            poissonRatio[i] = defaultNuT;
         }
     }
 
@@ -180,8 +222,9 @@ void TetrahedronAnisotropicForceField<DataTypes>::setMechanicalParametersFromCon
 
     type::vector<std::pair<Real, int> > listOfNorm = generateListOfNorm(tetraBarycenter);
 
-    IDWdata(listOfNorm,youngModulus[eltIndex],1); // Young Modulus Transverse
-    IDWdata(listOfNorm,param[eltIndex][1],2);     // Young Modulus Longituinal
+    // controlPoints[j] = [nodeIndex, E_T, E_L, θ, φ]
+    IDWdata(listOfNorm, youngModulus[eltIndex], 1); // E_T (Young Modulus Transverse)
+    IDWdata(listOfNorm, param[eltIndex][1],     2); // E_L (Young Modulus Longitudinal)
     IDWdirection(listOfNorm,dir[eltIndex]);       // direction of transverse anisotropy vec normalized Coord(x,y,z)
 
     d_anisotropyDirection.endEdit();
@@ -227,7 +270,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::IDWdata(type::vector<std::pair
 {
     Real &data = dataToInterpolate;
     const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
-    // msg_info() << "indexData " << indexData << "    " << controlPoints[listOfNormWeighted[0].second][indexData];
     for(size_t i=0;i<d_IDWDepth.getValue();i++)
     {
         data += controlPoints[listOfNormWeighted[i].second][indexData] * listOfNormWeighted[i].first;
@@ -266,11 +308,14 @@ void TetrahedronAnisotropicForceField<DataTypes>::IDWdirection(type::vector<std:
     dir = Coord(d_x,d_y,d_z);
 }
 
+/// Computes per-element Kelvin eigenvalues (λ_k) and eigentensors (N_k) of the elasticity tensor.
+/// The elasticity tensor decomposes as E = Σ_k λ_k (N_k ⊗ N_k) — Germain 2013, Eq. 4.3.
+/// CUBIC:                3 eigenvalues, 6 tensors (Nd, Ne, Np, Ns1-3)         — Germain §4.4.1, Eqs 4.39-4.41
+/// TRANSVERSE_ISOTROPIC: 4 eigenvalues, 6 tensors (Nh1, Np, Ns3, Nh2, Ns1, Ns2) — Germain §4.4.7, Eqs 4.118-4.122
+/// The local frame (n = fiber axis, v1/v2 = transverse orthonormal basis) is built from d_anisotropyDirection[eltIndex].
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size_t eltIndex,EigenTensors &eigenTensors , EigenValues &eigenValues)
 {
-    // msg_info() << "-------------------------------- ENTER computeKelvinModesForElts";
-
     if (elasticitySymmetry != ISOTROPIC)
     {
         Vec4 anisotropyParameter=d_anisotropyParameter.getValue()[eltIndex];
@@ -278,6 +323,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
         Real youngModulus = d_youngModulus.getValue()[eltIndex];
         Real poissonRatio = d_poissonRatio.getValue()[eltIndex];
 
+        // n: fiber/symmetry axis (e3 in Germain's notation); v1, v2: orthonormal transverse basis
         Coord n = d_anisotropyDirection.getValue()[eltIndex];
         n/=n.norm();
         Coord v1,v2;
@@ -326,14 +372,16 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             //                        | 5 | 0   | 0   | 0   | 0        | 0        | A(1-2v)/2 |
             //                        +---+-----+-----+-----+----------+----------+-----------+
 
+            // Voigt stiffness entries from isotropic E and ν, modified by the Zener anisotropy ratio A.
+            // A=1 → isotropic (c44 = μ), A≠1 → stiffer (A>1) or softer (A<1) along cube-face diagonals.
             Real c11 = youngModulus * (1 - poissonRatio) / (1 - poissonRatio - 2 * poissonRatio * poissonRatio);
             Real c12 = youngModulus * poissonRatio / (1 - poissonRatio - 2 * poissonRatio * poissonRatio);
             Real c44 = anisotropyRatio * (c11 - c12) / 2;
 
-            // The number of modes is equal to three, so that the tensor has three eigenvalues:
-            Real eigen1 = c11 + 2 * c12;    // (4.39) dim 1
-            Real eigen2 = c11 - c12;        // (4.40) dim 2
-            Real eigen3 = 2 * c44;          // (4.41) dim 3
+            // Germain §4.4.1, Eqs 4.39-4.41: 3 eigenvalues with multiplicities 1, 2, 3
+            Real eigen1 = c11 + 2 * c12;    // (4.39) bulk — dilatation mode Nd
+            Real eigen2 = c11 - c12;        // (4.40) isotropic shear — modes Ne, Np
+            Real eigen3 = 2 * c44;          // (4.41) cubic shear — modes Ns1, Ns2, Ns3
 
             // ----------------------------------------------------------------------
             // BUILD THE ORTHOGONAL MATRICES
@@ -364,25 +412,12 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             Mat3x3 Ns3=(type::dyad(v1,v2)+type::dyad(v2,v1))/sqrt(2.0f);
 
 
-            // push all symmetric matrices and the eigenvalues
-//            std::vector<Mat3x3> eigenTensors;
-//            std::vector<Real> anisotropyScalarArray;
-
-//            eigenTensors.push_back(Nd);
-//            anisotropyScalarArray.push_back(eigen1);
-//            eigenTensors.push_back(Ne);
-//            anisotropyScalarArray.push_back(eigen2);
-//            eigenTensors.push_back(Np);
-//            anisotropyScalarArray.push_back(eigen2);
-//            eigenTensors.push_back(Ns1);
-//            anisotropyScalarArray.push_back(eigen3);
-//            eigenTensors.push_back(Ns2);
-//            anisotropyScalarArray.push_back(eigen3);
-//            eigenTensors.push_back(Ns3);
-//            anisotropyScalarArray.push_back(eigen3);
-
-//            veceigenTensors.push_back(eigenTensors);
-//            vecAnisotropyScalarArray.push_back(anisotropyScalarArray);
+            eigenTensors[0] = Nd;  eigenValues[0] = eigen1;
+            eigenTensors[1] = Ne;  eigenValues[1] = eigen2;
+            eigenTensors[2] = Np;  eigenValues[2] = eigen2;
+            eigenTensors[3] = Ns1; eigenValues[3] = eigen3;
+            eigenTensors[4] = Ns2; eigenValues[4] = eigen3;
+            eigenTensors[5] = Ns3; eigenValues[5] = eigen3;
 
             //msg_info() << eigen1 << ' ' << eigen2 << ' '<< eigen2 << ' '<< eigen3 << ' ' << eigen3 << ' '<< eigen3 << ' ';
             //msg_info() << Nd << ' ' << Ne<< ' '<< Np<< ' '<< Ns1<< ' ' << Ns2<< ' '<< Ns3<< ' ';
@@ -394,83 +429,27 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             //msg_info() << "Ns3 " << Ns3;
         }
         else if (anisotropyParameter[0]==TRANSVERSE_ISOTROPIC) {
-            // Real youngModulusTransverse = youngModulus;
-            // Real poissonRatioTransverse = poissonRatio;
-            // Real youngModulusLongitudinal = anisotropyParameter[1];
-
-            // //            Real poissonRatioTransverseLongitudinal = 0.4161;
-            // Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
-            // Real poissonRatioLongitudinalTransverse = poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
-
-            // Real gamma=1/((1+poissonRatioTransverse)*(1+poissonRatioTransverse)*(1-2*poissonRatioTransverse));
-
-            // Real shearModulusLongitudinal = sqrt(youngModulusTransverse*youngModulusLongitudinal) * 1/(2*(1+poissonRatioTransverse));
-
-
-            // Real c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
-            // Real c33=youngModulusLongitudinal*gamma*(1-poissonRatioTransverse*poissonRatioTransverse);
-            // Real c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
-            // Real c55= c44; // shearModulusLongitudinal; // = c66
-            // Real c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
-            // Real c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
-
-
-            ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-            // // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
-            // long double youngModulusTransverse = youngModulus;
-            // long double poissonRatioTransverse = poissonRatio;
-            // long double youngModulusLongitudinal=anisotropyParameter[1];
-
-            // long double poissonRatioTransverseLongitudinal=anisotropyParameter[2];
-            // //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
-
-            // long double poissonRatioLongitudinalTransverse=poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
-
-            // //Real shearModulusLongitudinal=anisotropyParameter[3];
-            // //Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
-            // long double shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioLongitudinalTransverse));
-
-
-            // //if (poissonRatioLongitudinalTransverse>0.5)
-            // //    poissonRatioLongitudinalTransverse = 0.5;
-
-            // long double gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
-
-            // long double c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
-            // long double c33=youngModulusLongitudinal*gamma*(1-pow(poissonRatioTransverse,2));
-
-            // long double c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
-            // long double c55= shearModulusLongitudinal; //c44; // = c66
-            // long double c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
-
-            // // STABLE
-            // long double c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
-            // // UNSTABLE BUT CORRECT FORMULATION !!?
-            // // long double c13 = youngModulusLongitudinal*gamma*(poissonRatioTransverseLongitudinal+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
-
-
-            ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
             // get the constants from the young modulus, Poisson ratio and anisotropy ratio.
             Real youngModulusTransverse = youngModulus;
             Real poissonRatioTransverse = poissonRatio;
             Real youngModulusLongitudinal=anisotropyParameter[1];
             Real poissonRatioTransverseLongitudinal=anisotropyParameter[2];
             Real shearModulusLongitudinal=anisotropyParameter[3];
-            //Real poissonRatioTransverseLongitudinal = poissonRatioTransverse * sqrt(youngModulusTransverse/youngModulusLongitudinal);
-            //            Real shearModulusLongitudinal = youngModulusLongitudinal/(2.0*(1.0+poissonRatioTransverseLongitudinal));
 
             Real poissonRatioLongitudinalTransverse= poissonRatioTransverseLongitudinal*youngModulusLongitudinal/youngModulusTransverse;
 
-            Real gamma=1/(1-pow(poissonRatioTransverse,2)-2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal-2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
+            // Voigt stiffness entries (fiber axis = e3): c11=c22 (transverse), c33 (longitudinal),
+            // c12 (ν_T coupling), c13=c23 (mixed), c44=c55=G_L (fiber shear), c55=(c11-c12)/2=G_T (transverse shear)
+            Real gammaInv = 1 - pow(poissonRatioTransverse,2)
+                              - 2*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal
+                              - 2*poissonRatioTransverse*poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal;
+            // Stability is checked per-element in the calling loop (init/reinit) to aggregate counts.
+            Real gamma=1/gammaInv;
 
             Real c11=youngModulusTransverse*gamma*(1-poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal); // = c22
             Real c33=youngModulusLongitudinal*gamma*(1-poissonRatioTransverse*poissonRatioTransverse);
-            Real c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); //shearModulusLongitudinal; //
-            Real c55= c44; // shearModulusLongitudinal; // = c66
+            Real c44= youngModulusTransverse/(2*(1+poissonRatioTransverse)); // G_T (transverse shear) — see eigen4 bug below
+            Real c55= c44; // = G_T (same as c44 for this implementation)
             Real c12=youngModulusTransverse*gamma*(poissonRatioTransverse+poissonRatioLongitudinalTransverse*poissonRatioTransverseLongitudinal);
             Real c13=youngModulusTransverse*gamma*(poissonRatioLongitudinalTransverse+poissonRatioTransverse*poissonRatioTransverseLongitudinal);
 
@@ -486,11 +465,11 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             Real calpha=cos(alpha);
             Real secalpha=1/calpha;
 
-            // (4.118)
-            Real eigen1 = c33 + M_SQRT2 * c13 * (talpha + secalpha);
-            Real eigen2 = c11 - c12;
-            Real eigen3 = c33 + M_SQRT2 * c13 * (talpha - secalpha);
-            Real eigen4 = 2  * c44; //shearModulusLongitudinal;
+            // Germain §4.4.7, Eqs 4.118-4.119 (hexagonal tensor, e3 axis)
+            Real eigen1 = c33 + M_SQRT2 * c13 * (talpha + secalpha); // λ1: mixed bulk/fiber dilatation
+            Real eigen2 = c11 - c12;                                  // λ2: transverse shear 2G_T (modes Np, Ns3)
+            Real eigen3 = c33 + M_SQRT2 * c13 * (talpha - secalpha); // λ3: mixed extension/compression
+            Real eigen4 = 2 * shearModulusLongitudinal; // 2  * c44; // BUG: should be 2*shearModulusLongitudinal (2G_L). See project_known_bugs.md.
             ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -530,7 +509,8 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
             }
             else
             {
-                if (eltIndex == 0) msg_info() << "---------> ISOTROPIC";
+                if (eltIndex == 0) 
+                    msg_info() << "---------> \nTRANSVERSE_ISOTROPIC but set with ISOTROPIC mechanical parameter switch to ISOTROPIC kelvin mode decomposition/projection";
                 v1 = Coord(1,0,0);
                 v2 = Coord(0,1,0);
                 n  = Coord(0,0,1);
@@ -541,8 +521,7 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
                 eigen3 = eigen2;
                 eigen4 = eigen2;
 
-                Nh1; // == Nd
-                Nh1.identity();
+                Nh1.identity(); // == Nd
                 Nh1/= sqrt(3.0f);
 
                 Nh2=(2*type::dyad(n,n)-type::dyad(v1,v1)-type::dyad(v2,v2))/sqrt(6.0f); // == Ne3
@@ -594,8 +573,65 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeKelvinModesForElts(size
         }
 
     }
-    // msg_info() << "-------------------------------- EXIT computeKelvinModesForElts";
+}
 
+template<class DataTypes>
+void TetrahedronAnisotropicForceField<DataTypes>::verifyStability() const
+{
+    const type::vector<TetrahedronRestInformation>& tetrahedronInf = tetrahedronInfo.getValue();
+    const size_t nbTetras = tetrahedronInf.size();
+    if (nbTetras == 0 || elasticitySymmetry == ISOTROPIC) return;
+
+    size_t nbUnstable = 0, firstUnstable = size_t(-1);
+
+    for (size_t i = 0; i < nbTetras; ++i)
+    {
+        const EigenValues& ev = tetrahedronInf[i].eigenValues;
+        Real minEig = std::numeric_limits<Real>::max();
+        Real maxEig = std::numeric_limits<Real>::lowest();
+        bool eltUnstable = false;
+        for (size_t k = 0; k < ev.size(); ++k) {
+            if (ev[k] < minEig) minEig = ev[k];
+            if (ev[k] > maxEig) maxEig = ev[k];
+            if (ev[k] <= Real(0)) eltUnstable = true;
+        }
+
+        if (eltUnstable) {
+            if (nbUnstable == 0) {
+                // Detailed diagnosis for the first unstable element only.
+                const Vec4 ap  = d_anisotropyParameter.getValue()[i];
+                Real E_T       = d_youngModulus.getValue()[i];
+                Real nu_T      = d_poissonRatio.getValue()[i];
+                Real E_L       = ap[1];
+                Real nu_TL     = ap[2];
+                Real nu_LT     = nu_TL * E_L / E_T;
+                Real gammaInv  = 1 - nu_T*nu_T - 2*nu_LT*nu_TL - 2*nu_T*nu_LT*nu_TL;
+                Real nuTLBound = (E_L > Real(0)) ? std::sqrt((1-nu_T) / (2*E_L/E_T)) : Real(0);
+                msg_error() << "TI UNSTABLE at elt " << i << " (first occurrence):"
+                            << "\n  min Kelvin eigenvalue = " << minEig
+                            << "\n  gammaInv = " << gammaInv << (gammaInv <= 0 ? " <= 0 (stiffness tensor is indefinite)" : "")
+                            << "\n  E_L/E_T = " << E_L/E_T
+                            << "\n  nu_TL = " << nu_TL << "  stability bound: |nu_TL| < " << nuTLBound
+                            << "\n  nu_LT (derived) = " << nu_LT
+                            << "\n  Use tools/ti_material_stability.py to find valid parameter ranges.";
+            }
+            ++nbUnstable;
+            if (firstUnstable == size_t(-1)) firstUnstable = i;
+        } else if (nbUnstable == 0 && i == 0 && minEig > Real(0)) {
+            // Condition number check on first element if stable.
+            Real cond = maxEig / minEig;
+            if (cond > Real(1e4))
+                msg_warning() << "TI stiffness condition number ~" << cond
+                              << " at elt 0 (max/min Kelvin eigenvalue)."
+                              << " Iterative solvers (CGLinearSolver) may converge slowly.";
+        }
+    }
+
+    if (nbUnstable > 0)
+        msg_error() << nbUnstable << "/" << nbTetras
+                    << " elements have at least one negative Kelvin eigenvalue."
+                    << " First unstable element: " << firstUnstable
+                    << ". Simulation WILL diverge — fix material parameters.";
 }
 
 template<class DataTypes>
@@ -630,8 +666,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::initStiffnessVector(Tetrahedro
     /// Filling tetrahedronInf->stiffnessVector thanks to previous E decomposition
     /// Important: the stiffnessVector is here defined on the edges of tetra
     computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
-
-    // msg_info("my_tinfo.stiffnessVector") << my_tinfo.stiffnessVector;
 }
 
 template <class DataTypes>
@@ -650,6 +684,11 @@ void TetrahedronAnisotropicForceField<DataTypes>::updateStiffnessVector(const Te
     computeTetrahedronStiffnessEdgeMatrixForElts(my_tinfo.stiffnessVector,my_tinfo.eigenTensors,my_tinfo.eigenValues,point);
 }
 
+/// Assembles the 6 edge stiffness 3×3 matrices K[0..5] for one tetrahedron.
+/// Shape vectors b_j = ±cross(opposite edges)/vol are the P1 barycentric coordinate gradients (const per tet).
+/// ISOTROPIC:    K[j]_mn = λ b_k[n]b_l[m] + μ(b_l[n]b_k[m] + (b_l·b_k)δ_mn)   — Delingette 2019, Prop 1
+/// ANISOTROPIC:  K[j] = (|vol|/6) Σ_i λ_i A_i (b_l ⊗ b_k) A_i                 — Delingette 2019, Prop 3
+/// Edge ordering j: {(0,1),(0,2),(0,3),(1,2),(1,3),(2,3)} — see edgesInTetrahedronArray.
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::computeTetrahedronStiffnessEdgeMatrixForElts(TetraEdgesStiffness &stiffnessVector,const EigenTensors &eigenTensors , const EigenValues &eigenValues,const Coord point[4])
 {
@@ -702,8 +741,8 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeTetrahedronStiffnessEdg
             k=edgesInTetrahedronArray[j][0];
             l=edgesInTetrahedronArray[j][1];
 
-            /// Stiffness Matrix decomposition thanks the kelvin modes and shape vector
-            /// ref : AnisotropicElasticity Hervé Delingette, 2019, (4)
+            // K[j] += V_K * Σ_i λ_i A_i (b_l⊗b_k) A_i — Delingette 2019, Proposition 3
+            // tmp = b_l⊗b_k (dyadic product of shape vectors for edge j=(k,l))
             Mat3x3 tmp=type::dyad(shapeVector[l],shapeVector[k]);
             for(i=0;i<6;++i) {
                 stiffnessVector[j]+=(eigenValues[i]*eigenTensors[i]*tmp*eigenTensors[i])*fabs(volume)/6;
@@ -713,6 +752,9 @@ void TetrahedronAnisotropicForceField<DataTypes>::computeTetrahedronStiffnessEdg
 }
 
 
+/// Extracts the rigid-body rotation from tetrahedron edge vectors dp[0..5] via QR decomposition.
+/// Builds an orthonormal frame stored row-wise: row0=e_x (along dp[0]), row2=normalize(e_x × dp[1]), row1=row2 × row0.
+/// Used at rest to compute restRotation and each frame to compute the current frame S; R = S^T * restRotation.
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::computeQRRotation( Mat3x3 &r, const Coord *dp)
 {
@@ -758,12 +800,13 @@ TetrahedronAnisotropicForceField<DataTypes>::getRotatedStiffnessArray(
     return(restTetra->rotatedStiffnessVector);
 }
 
+/// Corotational linear elasticity: per-tetra rigid rotation R is extracted via QR decomposition each step.
+/// Forces are computed in the element rest frame then rotated back to world frame: f = R^T * (K * R * d).
+/// Also caches rotatedStiffnessVector = R * K * R^T per edge for use by addDForce (implicit solvers).
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::MechanicalParams* mparams /* PARAMS FIRST */,
                                                                         DataVecDeriv &  dataF, const DataVecCoord &  dataX , const DataVecDeriv & /*dataV*/ )
 {
-    // msg_info() << "ENTER addForce";
-
     SOFA_UNUSED(mparams);
 
     VecDeriv& f        = *(dataF.beginEdit());
@@ -786,13 +829,17 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
     dp.resize(4);
     force.resize(4);
 
+    // Debug accumulators (reset each addForce call)
+    Real dbg_maxRestForce = 0, dbg_maxDpos = 0, dbg_maxRerr = 0;
+    size_t dbg_worstForceTet = 0, dbg_worstDposTet = 0, dbg_nanTet = size_t(-1);
+
     Coord dpos,sv;
     typename VecElement::const_iterator it;
     for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
     {
         Tetra index = *it;
         tetinfo=&tetrahedronInf[i];
-        size_t nbControlPoints=index.size();
+        size_t nbPoints=index.size();
         const  TetraEdgesStiffness &stiffnessArray=getStiffnessArray(tetinfo);
 
 
@@ -803,94 +850,170 @@ void TetrahedronAnisotropicForceField<DataTypes>::addForce(const sofa::core::Mec
             dpp[j]=x[tetinfo->v[edgesInTetrahedronArray[j][1]]]-x[tetinfo->v[edgesInTetrahedronArray[j][0]]];
         }
 
-        /// perform QR decomposition
+        // S: QR frame of current edges; R = S^T * restRotation maps world-frame vectors to rest-frame
         computeQRRotation(S,dpp);
         R=S.transposed()*tetinfo->restRotation;
 
-        /// store transpose of rotation
+        // Debug: R orthogonality residual (cheap: 9 multiplies)
+        if (this->f_printLog.getValue()) {
+            Mat3x3 RtR = R.transposed() * R;
+            Real Rerr = 0;
+            for (int a=0;a<3;a++) for (int b=0;b<3;b++) {
+                Real d = RtR[a][b] - (a==b ? Real(1) : Real(0));
+                Rerr = std::max(Rerr, std::abs(d));
+            }
+            if (Rerr > dbg_maxRerr) dbg_maxRerr = Rerr;
+        }
+
+        // tetinfo->rotation = R^T: maps rest-frame vectors back to world frame (used for force back-rotation)
         tetinfo->rotation=R.transposed();
         std::fill(force.begin(),force.end(),Coord());
 
         tetinfo->rotatedStiffnessVector.clear();
 
-        // loop over each entry in the stiffness vector of size nbControlPoints*(nbControlPoints-1)/2
-        for (l=0,j=0; j<nbControlPoints; ++j) {
+        // loop over each entry in the stiffness vector
+        for (l=0,j=0; j<nbPoints; ++j) {
             v0 = index[j];
-            for ( k=j+1; k<nbControlPoints; ++k,++l) {
+            for ( k=j+1; k<nbPoints; ++k,++l) {
                 v1 = index[k];
                 dpos=x[v0]-x[v1];
-                // displacement in the rest configuration
+                // d_rest = R^T * (x_v0 - x_v1) - (x0_v0 - x0_v1): displacement mapped to rest frame
                 dpos=tetinfo->rotation*dpos-(x0[v0]-x0[v1]);
-                // force on first vertex in the rest configuration
+
+                // Debug: track max strain magnitude
+                {
+                    Real dn = dpos.norm();
+                    if (!std::isfinite(dn)) {
+                        if (dbg_nanTet == size_t(-1)) dbg_nanTet = i;
+                    } else if (dn > dbg_maxDpos) { dbg_maxDpos = dn; dbg_worstDposTet = i; }
+                }
+
+                // forces accumulated in rest frame (Newton's 3rd law for the two endpoints)
                 force[k]-=stiffnessArray[l]*dpos;
-                // force on second vertex in the rest configuration
                 force[j]+=stiffnessArray[l].multTranspose(dpos);
 
-                // implicit scheme : need to store the rotated tensor
+                // cache K_rot = R * K * R^T (world-frame stiffness) — unused by addDForce/addKToMatrix, kept for debugging
                 Mat3x3 mat=R*stiffnessArray[l]*tetinfo->rotation;
                 tetinfo->rotatedStiffnessVector[l] = mat;
 
             }
         }
 
-        for (j=0; j<nbControlPoints; ++j)
+        // Debug: track max rest-frame force magnitude
+        for (size_t n=0; n<nbPoints; ++n) {
+            Real fn = force[n].norm();
+            if (!std::isfinite(fn)) {
+                if (dbg_nanTet == size_t(-1)) dbg_nanTet = i;
+            } else if (fn > dbg_maxRestForce) { dbg_maxRestForce = fn; dbg_worstForceTet = i; }
+        }
+
+        for (j=0; j<nbPoints; ++j)
         {
             f[index[j]]+=R*force[j];
         }
 
     }
+
+    // Debug summary: print every call when printLog=true, or on any NaN, or when forces are suspiciously large
+    if (this->f_printLog.getValue() || dbg_nanTet != size_t(-1) || dbg_maxRestForce > Real(1e6)) {
+        msg_info() << "[addForce] maxRestForce=" << dbg_maxRestForce << " @tet=" << dbg_worstForceTet
+                   << "  maxDpos(strain)=" << dbg_maxDpos << " @tet=" << dbg_worstDposTet
+                   << "  maxRerr(R orth)=" << dbg_maxRerr;
+        if (dbg_nanTet != size_t(-1))
+            msg_warning() << "[addForce] NaN/Inf detected at tet=" << dbg_nanTet
+                          << " — positions or stiffness may be corrupt";
+    }
+
     updateMatrix=true; // useless normally
     tetrahedronInfo.endEdit();
     dataF.endEdit();
 }
 
 
+/// Computes df = kFactor * K_rot * dx for implicit time integration.
+/// Recomputes R from current positions each call so K_rot = R*K*R^T is always fresh.
+/// This is necessary for TI materials: unlike isotropic K, K_rot is NOT rotation-invariant,
+/// so using a cached R from a previous addForce call produces wrong tangent stiffness under
+/// fast rigid-body motion, causing the solver to diverge.
+/// kFactor = (h² * stiffness_scale + h * rayleighStiffness) incorporates Rayleigh damping.
 template <class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::addDForce(const sofa::core::MechanicalParams* mparams /* PARAMS FIRST */, DataVecDeriv&   datadF , const DataVecDeriv&   datadX )
 {
-    // msg_info() << "ENTER addDForce";
-
     VecDeriv& df       = *(datadF.beginEdit());
     const VecCoord& dx =   datadX.getValue()  ;
     Real kFactor = sofa::core::mechanicalparams::kFactorIncludingRayleighDamping(mparams,this->rayleighStiffness.getValue());
+    const VecCoord& x  = this->mstate->read(core::vec_id::read_access::position)->getValue();
     type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
 
     Coord dpos;
     size_t i,j,k,v0,v1,rank;
 
-    size_t nbControlPoints= 4;
-
     TetrahedronRestInformation *tetinfo;
     const VecElement * _indexedElements = & (_topology->getTetrahedra());
 
+    Real dbg_maxDf = 0, dbg_maxDx = 0;
+    size_t dbg_worstDfTet = 0, dbg_worstDxTet = 0, dbg_nanTet = size_t(-1);
 
     typename VecElement::const_iterator it;
     for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
     {
         Tetra index = *it;
+        const size_t nbPoints = index.size();
         tetinfo=&tetrahedronInf[i];
-        const  TetraEdgesStiffness &stiffnessArray=getRotatedStiffnessArray(tetinfo);
+
+        // Recompute R from current positions (not cached from last addForce).
+        Coord dpp[6];
+        for (j=0; j<6; ++j)
+            dpp[j] = x[tetinfo->v[edgesInTetrahedronArray[j][1]]] - x[tetinfo->v[edgesInTetrahedronArray[j][0]]];
+        Mat3x3 S, R;
+        computeQRRotation(S, dpp);
+        R = S.transposed() * tetinfo->restRotation;
+        const Mat3x3 Q = R.transposed(); // Q = R^T: world → rest frame
+
         sofa::type::vector<Deriv> dforce;
+        dforce.resize(nbPoints);
 
-        dforce.resize(nbControlPoints);
-
-        /// loop over each entry in the stiffness vector of size nbControlPoints*(nbControlPoints+1)/2
-        for (rank=0,j=0; j<nbControlPoints; ++j)
+        for (rank=0,j=0; j<nbPoints; ++j)
         {
             v0 = index[j];
-            for ( k=j+1; k<nbControlPoints; ++k,++rank)
+            for ( k=j+1; k<nbPoints; ++k,++rank)
             {
                 v1 = index[k];
-                dpos=dx[v0]-dx[v1];
-                dforce[k]-=stiffnessArray[rank]*dpos*kFactor;
-                dforce[j]+=stiffnessArray[rank].multTranspose(dpos*kFactor);
+                dpos = Q * (dx[v0]-dx[v1]);          // rotate dx to rest frame
+
+                // Debug: track max |dx| input
+                {
+                    Real dn = dpos.norm();
+                    if (!std::isfinite(dn)) { if (dbg_nanTet == size_t(-1)) dbg_nanTet = i; }
+                    else if (dn > dbg_maxDx) { dbg_maxDx = dn; dbg_worstDxTet = i; }
+                }
+
+                const Coord fk = tetinfo->stiffnessVector[rank] * dpos;
+                const Coord fj = tetinfo->stiffnessVector[rank].multTranspose(dpos);
+                dforce[k] -= R * fk * kFactor;       // rotate force back to world frame
+                dforce[j] += R * fj * kFactor;
             }
         }
 
-        for (j=0; j<nbControlPoints; ++j)
+        // Debug: track max |df| output
+        for (size_t n=0; n<nbPoints; ++n) {
+            Real fn = dforce[n].norm();
+            if (!std::isfinite(fn)) { if (dbg_nanTet == size_t(-1)) dbg_nanTet = i; }
+            else if (fn > dbg_maxDf) { dbg_maxDf = fn; dbg_worstDfTet = i; }
+        }
+
+        for (j=0; j<nbPoints; ++j)
         {
             df[index[j]]+=dforce[j];
         }
+    }
+
+    if (this->f_printLog.getValue() || dbg_nanTet != size_t(-1) || dbg_maxDf > Real(1e6)) {
+        msg_info() << "[addDForce] kFactor=" << kFactor
+                   << "  maxDf=" << dbg_maxDf << " @tet=" << dbg_worstDfTet
+                   << "  maxDx(rest)=" << dbg_maxDx << " @tet=" << dbg_worstDxTet;
+        if (dbg_nanTet != size_t(-1))
+            msg_warning() << "[addDForce] NaN/Inf detected at tet=" << dbg_nanTet;
     }
 
     datadF.endEdit();
@@ -898,44 +1021,74 @@ void TetrahedronAnisotropicForceField<DataTypes>::addDForce(const sofa::core::Me
 }
 
 
+/// Assembles the global tangent stiffness matrix for direct solvers (e.g. SparseLDLSolver).
+/// Recomputes R from current positions so K_rot = R*K*R^T matches the actual configuration.
+/// Adds 4 blocks per edge pair (j,l): K at (l,l), -K at (l,j), -K^T at (j,l), K^T at (j,j).
 template<class DataTypes>
 void TetrahedronAnisotropicForceField<DataTypes>::addKToMatrix(sofa::linearalgebra::BaseMatrix *mat, SReal k, unsigned int &offset)
 {
-    msg_info() << "ENTER addKToMatrix";
-
+    const VecCoord& x  = this->mstate->read(core::vec_id::read_access::position)->getValue();
     const type::vector<TetrahedronRestInformation> tetrahedronInf = *(tetrahedronInfo.beginEdit());
     size_t i,j,l,rank,n,m;
-
-    size_t nbControlPoints=4;
 
     const TetrahedronRestInformation *tetinfo;
     const VecElement * _indexedElements = & (_topology->getTetrahedra());
 
+    Real dbg_maxKrot = 0;
+    size_t dbg_worstKrotTet = 0, dbg_nanTet = size_t(-1);
 
     typename VecElement::const_iterator it;
     for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
     {
         Tetra index = *it;
+        const size_t nbPoints = index.size();
         tetinfo=&tetrahedronInf[i];
-        const  TetraEdgesStiffness &stiffnessArray=getStiffnessArray(tetinfo);
-        // const  TetraEdgesStiffness &stiffnessArray=getRotatedStiffnessArray(tetrahedronInf[i]);
 
-        // loop over each entry in the stiffness vector of size nbControlPoints*(nbControlPoints+1)/2
-        for (rank=0,j=0; j<nbControlPoints; ++j) {
-            for ( l=j+1; l<nbControlPoints; ++l,++rank) {
+        // Recompute R from current positions.
+        Coord dpp[6];
+        for (j=0; j<6; ++j)
+            dpp[j] = x[tetinfo->v[edgesInTetrahedronArray[j][1]]] - x[tetinfo->v[edgesInTetrahedronArray[j][0]]];
+        Mat3x3 S, R;
+        computeQRRotation(S, dpp);
+        R = S.transposed() * tetinfo->restRotation;
+        const Mat3x3 Q = R.transposed();
+
+        // Build fresh K_rot[rank] = R * K[rank] * R^T for all 6 edge pairs.
+        TetraEdgesStiffness rotatedK;
+        for (rank=0; rank<6; ++rank) {
+            rotatedK[rank] = R * tetinfo->stiffnessVector[rank] * Q;
+
+            // Debug: track max absolute entry in K_rot
+            for (n=0; n<3; ++n) for (m=0; m<3; ++m) {
+                Real v = std::abs(rotatedK[rank][n][m]);
+                if (!std::isfinite(v)) { if (dbg_nanTet == size_t(-1)) dbg_nanTet = i; }
+                else if (v > dbg_maxKrot) { dbg_maxKrot = v; dbg_worstKrotTet = i; }
+            }
+        }
+
+        for (rank=0,j=0; j<nbPoints; ++j) {
+            for ( l=j+1; l<nbPoints; ++l,++rank) {
                 for (n=0; n<3; ++n) {
                     for (m=0; m<3; ++m) {
-                        Mat3x3 stiffnessArrayTranspose = stiffnessArray[rank];
-                        stiffnessArrayTranspose.transpose();
-                        mat->add(3*index[l]+ n + offset, 3*index[l]+ m + offset, stiffnessArray[rank][n][m] * k);
-                        mat->add(3*index[l]+ n + offset, 3*index[j]+ m + offset, - stiffnessArray[rank][n][m] * k);
-                        mat->add(3*index[j]+ n + offset, 3*index[l]+ m + offset, - stiffnessArrayTranspose[n][m] * k);
-                        mat->add(3*index[j]+ n + offset, 3*index[j]+ m + offset, stiffnessArrayTranspose[n][m] * k);
+                        Mat3x3 rotatedKTranspose = rotatedK[rank];
+                        rotatedKTranspose.transpose();
+                        mat->add(3*index[l]+ n + offset, 3*index[l]+ m + offset,   rotatedK[rank][n][m] * k);
+                        mat->add(3*index[l]+ n + offset, 3*index[j]+ m + offset, - rotatedK[rank][n][m] * k);
+                        mat->add(3*index[j]+ n + offset, 3*index[l]+ m + offset, - rotatedKTranspose[n][m] * k);
+                        mat->add(3*index[j]+ n + offset, 3*index[j]+ m + offset,   rotatedKTranspose[n][m] * k);
                     }
                 }
             }
         }
     }
+
+    if (this->f_printLog.getValue() || dbg_nanTet != size_t(-1) || dbg_maxKrot > Real(1e9)) {
+        msg_info() << "[addKToMatrix] k=" << k
+                   << "  maxKrot=" << dbg_maxKrot << " @tet=" << dbg_worstKrotTet;
+        if (dbg_nanTet != size_t(-1))
+            msg_warning() << "[addKToMatrix] NaN/Inf in K_rot at tet=" << dbg_nanTet;
+    }
+
     tetrahedronInfo.endEdit();
 }
 
@@ -951,10 +1104,38 @@ void TetrahedronAnisotropicForceField<DataTypes>::updateLameCoefficients()
 
 
 template<class DataTypes>
-SReal TetrahedronAnisotropicForceField<DataTypes>::getPotentialEnergy(const core::MechanicalParams*, const DataVecCoord&) const
+SReal TetrahedronAnisotropicForceField<DataTypes>::getPotentialEnergy(const core::MechanicalParams*, const DataVecCoord& dataX) const
 {
-    msg_error() << "ERROR("<<this->getClassName()<<"): getPotentialEnergy( const MechanicalParams*, const DataVecCoord& ) not implemented.";
-    return 0.0;
+    const VecCoord& x  = dataX.getValue();
+    const VecCoord& x0 = this->mstate->read(core::vec_id::read_access::restPosition)->getValue();
+    const type::vector<TetrahedronRestInformation>& tetrahedronInf = tetrahedronInfo.getValue();
+    const VecElement* elements = &(_topology->getTetrahedra());
+
+    SReal energy = 0;
+    size_t i = 0;
+    for (auto it = elements->begin(); it != elements->end(); ++it, ++i)
+    {
+        const Tetra& index = *it;
+        const TetrahedronRestInformation& tetinfo = tetrahedronInf[i];
+
+        // Rest-frame nodal displacements: u_j = R^T * x_j - x0_j
+        // tetinfo.rotation stores R^T (world->rest), cached by the last addForce call.
+        Coord u[4];
+        for (size_t j = 0; j < 4; ++j)
+            u[j] = tetinfo.rotation * x[index[j]] - x0[index[j]];
+
+        // W = ½ Σ_{edges (j,k)} [ (K^T·d)·u_j − (K·d)·u_k ]
+        // where d = u_j - u_k.  Mirrors addForce: force[j] += K^T·d, force[k] -= K·d.
+        // For symmetric K this reduces to ½ d^T·K·d; the full form is exact for any K.
+        size_t rank = 0;
+        for (size_t j = 0; j < 4; ++j)
+            for (size_t k = j + 1; k < 4; ++k, ++rank) {
+                const Coord d = u[j] - u[k];
+                energy += SReal(0.5) * (dot(tetinfo.stiffnessVector[rank].multTranspose(d), u[j])
+                                      - dot(tetinfo.stiffnessVector[rank] * d, u[k]));
+            }
+    }
+    return energy;
 }
 
 
@@ -963,22 +1144,9 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 {
 
 #ifndef SOFA_NO_OPENGL
-    bool test_visu = 1;
-    if(test_visu == 0){
-        if (!vparams->displayFlags().getShowForceFields()) return;
-        if (!this->mstate) return;
-
-        if (vparams->displayFlags().getShowWireFrame())
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-
-
-        if (vparams->displayFlags().getShowWireFrame())
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    }
-    else
+    if(this->d_componentState.getValue() == sofa::core::objectmodel::ComponentState::Invalid) return;
+    if (!vparams->displayFlags().getShowForceFields()) return;
     {
-        if(this->d_componentState.getValue() == sofa::core::objectmodel::ComponentState::Invalid) return ;
-        if (!vparams->displayFlags().getShowForceFields()) return;
 
         type::vector<TetrahedronRestInformation>& tetrahedronInf = *(tetrahedronInfo.beginEdit());
         const VecElement * _indexedElements = & (_topology->getTetrahedra());
@@ -988,22 +1156,18 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
         size_t i;
         size_t nbTetrahedra=_topology->getNbTetrahedra();
 
-        Real young_1, young_2,anisotropyType;
+        const bool hasAnisotropyParam = d_anisotropyParameter.getValue().size() == nbTetrahedra;
+        Real young_1, young_2, anisotropyType;
         float transparency = d_transparency.getValue();
         typename VecElement::const_iterator it;
 
         for(it=_indexedElements->begin(), i = 0 ; it!=_indexedElements->end(); ++it,++i)
         {
-            anisotropyType = d_anisotropyParameter.getValue()[i][0];
+            anisotropyType = hasAnisotropyParam ? d_anisotropyParameter.getValue()[i][0] : Real(0);
 
 
             Tetra indexArray = *it;
             std::vector< type::Vec3 > points[4];
-
-            //nbControlPoints=indexArray.size();
-            //assert(stiffnessArray.size()==nbControlPoints*(nbControlPoints-1)/2);
-            //// loop over each entry in the stiffness vector of size nbControlPoints*(nbControlPoints+1)/2
-            //for (rank=0,j=0; j<nbControlPoints; ++j) {
 
             Index a = indexArray[0];
             Index b = indexArray[1];
@@ -1033,7 +1197,6 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
 
             if(d_drawDirection.getValue() and d_anisotropyDirection.getValue().size() == _topology->getNbTetrahedra())
             {
-                // msg_info() << "----- d_anisotropyDirection ----- " << i;
                 Coord n = d_anisotropyDirection.getValue()[i];
                 n/=n.norm();
 
@@ -1042,24 +1205,23 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
                 Vec3 temp= n; // t.getOrientation().rotate(n);
 
                 Coord tetraBarycenter = (x[a] + x[b] + x[c] + x[d]) / 4;
-//                msg_info() << '[' << tetraBaryce  nter[0] << ',' << tetraBarycenter[1] << ',' << tetraBarycenter[2] << "],";
                 Coord edge;
-                Real tetraEdgeLenght;
+                Real tetraEdgeLength = 0;
                 edge = x[a] - x[b];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
                 edge = x[a] - x[c];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
                 edge = x[a] - x[d];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
                 edge = x[b] - x[c];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
                 edge = x[b] - x[d];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
-                edge = x[c] - x[c];
-                tetraEdgeLenght += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
+                edge = x[c] - x[d];
+                tetraEdgeLength += sqrt(pow(edge[0], 2) + pow(edge[1], 2) + pow(edge[2], 2));
 
-                tetraEdgeLenght /= 6;
-                Real tetraInsphere =  tetraEdgeLenght / sqrt(24);
+                tetraEdgeLength /= 6;
+                Real tetraInsphere = tetraEdgeLength / sqrt(24);
                 temp *= tetraInsphere ;
                 type::Quat<SReal> q;
                 q.fromMatrix(tetrahedronInf[i].rotation);
@@ -1069,14 +1231,12 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
                 glLineWidth(3);
                 vparams->drawTool()->drawLine(tetraBarycenter-temp,tetraBarycenter+temp, type::RGBAColor(0.,0.,0.,.8));
             }
-            if(d_drawHeterogeneousTetra.getValue()) {
-                // msg_info() << "----- d_drawHeterogeneousTetra ----- " << i;
+            if(d_drawHeterogeneousTetra.getValue() && hasAnisotropyParam) {
                 young_1 = d_youngModulus.getValue()[i];
                 young_2 = d_anisotropyParameter.getValue()[i][1];
                 if(young_1 - young_2 != 0)
                 {
                     float col = (float)(abs(young_1 - young_2)/(young_1 + young_2));
-                    //msg_warning() << col;
                     float fac = col * 0.5f;
                     type::RGBAColor color1(col      , 0.0f - fac , 1.0f-col,transparency);
                     type::RGBAColor color2(col      , 0.5f - fac , 1.0f-col,transparency);
@@ -1089,36 +1249,21 @@ void TetrahedronAnisotropicForceField<DataTypes>::draw(const core::visual::Visua
                     vparams->drawTool()->drawTriangles(points[3],color2 );
                 }
             }
-            //            else if (anisotropyType == 4)
-            //            {
-            //                //msg_warning() << d_youngModulus.getValue()[i] << "  " << d_anisotropyParameter.getValue()[i][1];
-
-            //                vparams->drawTool()->drawTriangles(points[0], defaulttype::Vec<4,float>(0.0,0.0,1.0,1.0));
-            //                vparams->drawTool()->drawTriangles(points[1], defaulttype::Vec<4,float>(0.0,0.5,1.0,1.0));
-            //                vparams->drawTool()->drawTriangles(points[2], defaulttype::Vec<4,float>(0.0,1.0,1.0,1.0));
-            //                vparams->drawTool()->drawTriangles(points[3], defaulttype::Vec<4,float>(0.5,1.0,1.0,1.0));
-            //            }
             for(unsigned int i=0 ; i<4 ; i++) points[i].clear();
 
-            bool drawControlPoints = true;
-            if(drawControlPoints)
-            {
-                const type::vector<Vec5>&  controlPoints = d_controlPoints.getValue();
-                if (controlPoints.size() > 0)
-                {
-                    Coord CP;
-                    for (size_t j=0;j<controlPoints.size();j++)
-                    {
-                        vparams->drawTool()->drawSphere(x[controlPoints[j][0]], 1.5,type::RGBAColor(102./255.,0,102./255.,1.0));//type::RGBAColor(230./255.,32./255.,32./255.,.8));
-                    }
-                }
-
-            }
-
         }
+
+        if (d_drawHeterogeneousTetra.getValue() && d_controlPoints.isSet() && d_controlPoints.getValue().size() > 0)
+        {
+            const type::vector<Vec5>& controlPoints = d_controlPoints.getValue();
+            for (size_t j = 0; j < controlPoints.size(); ++j)
+                vparams->drawTool()->drawSphere(x[controlPoints[j][0]], 1.5, type::RGBAColor(102./255., 0, 102./255., 1.0));
+        }
+
         tetrahedronInfo.endEdit();
     }
 #endif /* SOFA_NO_OPENGL */
+
 
 }
 

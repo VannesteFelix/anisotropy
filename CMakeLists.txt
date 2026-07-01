@@ -19,8 +19,8 @@ set(HEADER_FILES
     ${Ani_SRC}/forcefield/TetrahedronAnisotropicForceField.h
     ${Ani_SRC}/forcefield/TetrahedronAnisotropicForceField.inl
 
-    ${Ani_SRC}/constraint/AnisotropyControlPointActuator.h
-    ${Ani_SRC}/constraint/AnisotropyControlPointActuator.inl    
+    # ${Ani_SRC}/constraint/AnisotropyControlPointActuator.h
+    # ${Ani_SRC}/constraint/AnisotropyControlPointActuator.inl    
     )
 
 set(SOURCE_FILES
@@ -28,7 +28,7 @@ set(SOURCE_FILES
 
     ${Ani_SRC}/forcefield/TetrahedronAnisotropicForceField.cpp
 
-    ${Ani_SRC}/constraint/AnisotropyControlPointActuator.cpp
+    # ${Ani_SRC}/constraint/AnisotropyControlPointActuator.cpp
     )
 
 set(README_FILES
